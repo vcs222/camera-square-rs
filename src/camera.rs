@@ -8,8 +8,25 @@ use std::io::{self, Read};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+
+static ZSL_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+pub fn prepare_still_capabilities() {
+    let _ = ZSL_AVAILABLE.get_or_init(|| {
+        Command::new("/usr/bin/rpicam-still")
+            .arg("--help")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                let mut help = output.stdout;
+                help.extend(output.stderr);
+                help.windows(5).any(|part| part == b"--zsl")
+            })
+    });
+}
 
 fn validate(settings: &CameraSettings) -> io::Result<()> {
     if settings.aspect >= ASPECT_RATIOS.len()
@@ -112,6 +129,25 @@ pub struct Preview {
 }
 
 impl Preview {
+    /// Placeholder while a capture worker owns the camera process.
+    pub fn inactive(
+        width: usize,
+        height: usize,
+        luma_stride: usize,
+        chroma_stride: usize,
+        frame_size: usize,
+    ) -> Self {
+        Self {
+            child: None,
+            output: None,
+            width,
+            height,
+            luma_stride,
+            chroma_stride,
+            frame_size,
+        }
+    }
+
     pub fn start(settings: &CameraSettings, screen_width: usize) -> io::Result<Self> {
         validate(settings)?;
         if !(2..=16_384).contains(&screen_width) {
@@ -212,9 +248,28 @@ pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) ->
         }
     }
     let aspect = ASPECT_RATIOS[settings.aspect];
+    let zsl_enabled = if std::env::var_os("CAMERA_SQUARE_ENABLE_ZSL").is_some() {
+        prepare_still_capabilities();
+        *ZSL_AVAILABLE.get().expect("still capabilities probed")
+    } else {
+        false
+    };
     let mut command = Command::new("/usr/bin/rpicam-still");
+    // This is a new camera process, so automatic exposure starts over. Keep a
+    // short warm-up by default and allow a longer one in difficult lighting.
+    let timeout_ms = std::env::var("CAMERA_SQUARE_STILL_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value <= 5_000)
+        .unwrap_or(350);
     command
-        .args(["--nopreview", "--timeout", "1200", "--quality", "95"])
+        .args([
+            "--nopreview",
+            "--timeout",
+            &timeout_ms.to_string(),
+            "--quality",
+            "95",
+        ])
         .args([
             "--width",
             &aspect.still_width.to_string(),
@@ -227,10 +282,15 @@ pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) ->
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     apply_settings(&mut command, settings);
+    if zsl_enabled {
+        command.arg("--zsl");
+    }
     if settings.capture_format.captures_raw() {
         command.arg("--raw");
     }
+    let started = Instant::now();
     let mut child = command.spawn()?;
+    let spawned_at = Instant::now();
     let status = match child.wait() {
         Ok(status) => status,
         Err(error) => {
@@ -238,6 +298,13 @@ pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) ->
             return Err(error);
         }
     };
+    eprintln!(
+        "camera-square-rs: still timing zsl={} timeout={}ms spawn={}ms process={}ms",
+        zsl_enabled,
+        timeout_ms,
+        spawned_at.duration_since(started).as_millis(),
+        spawned_at.elapsed().as_millis(),
+    );
     if !status.success() {
         return Err(io::Error::other(format!("rpicam-still failed: {status}")));
     }

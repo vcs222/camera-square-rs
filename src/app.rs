@@ -5,6 +5,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::camera::{Preview, capture_jpeg};
@@ -311,10 +312,13 @@ fn take_photo(
     state: &mut UiState,
     preview: &mut Preview,
     display: &mut Display,
-    frame: &mut Vec<u8>,
-    retry_at: &mut Instant,
     frame_ready: &mut bool,
+    capture_job: &mut Option<JoinHandle<CaptureOutcome>>,
 ) {
+    if capture_job.is_some() {
+        return;
+    }
+    let started = Instant::now();
     state.close_picker();
     display.pixels.fill(0);
     {
@@ -333,23 +337,48 @@ fn take_photo(
         );
     }
     let _ = display.present();
-    let stop_error = preview.stop().err();
-    let result = capture_path().and_then(|path| capture_jpeg(&state.camera, path));
-    state.show_message(
-        if result.is_ok() {
-            "SAVED"
-        } else {
-            "CAPTURE FAILED"
-        },
-        2.0,
+    let owned_preview = std::mem::replace(
+        preview,
+        Preview::inactive(
+            preview.width,
+            preview.height,
+            preview.luma_stride,
+            preview.chroma_stride,
+            preview.frame_size,
+        ),
     );
-    if let Err(error) = result {
-        eprintln!("camera-square-rs: capture failed: {error}");
-    }
-    if let Some(error) = stop_error {
-        eprintln!("camera-square-rs: preview stop: {error}");
-    }
-    restart_preview(state, preview, display, frame, retry_at, frame_ready);
+    let settings = state.camera.clone();
+    let screen_width = display.width;
+    *frame_ready = false;
+    *capture_job = Some(thread::spawn(move || {
+        let mut owned_preview = owned_preview;
+        let stop_error = owned_preview.stop().err();
+        let stopped_at = Instant::now();
+        let save_result = capture_path().and_then(|path| capture_jpeg(&settings, path));
+        let saved_at = Instant::now();
+        let next_preview = Preview::start(&settings, screen_width);
+        let restarted_at = Instant::now();
+        eprintln!(
+            "camera-square-rs: capture timing stop={}ms still={}ms restart={}ms total={}ms",
+            stopped_at.duration_since(started).as_millis(),
+            saved_at.duration_since(stopped_at).as_millis(),
+            restarted_at.duration_since(saved_at).as_millis(),
+            restarted_at.duration_since(started).as_millis(),
+        );
+        CaptureOutcome {
+            next_preview,
+            save_result,
+            stop_error,
+            started,
+        }
+    }));
+}
+
+struct CaptureOutcome {
+    next_preview: io::Result<Preview>,
+    save_result: io::Result<()>,
+    stop_error: Option<io::Error>,
+    started: Instant,
 }
 
 fn save_screenshot(state: &mut UiState, display: &Display) -> io::Result<()> {
@@ -505,6 +534,7 @@ struct TouchContext<'a> {
     preview_retry_at: &'a mut Instant,
     frame_ready: &'a mut bool,
     background: &'a mut Vec<u16>,
+    capture_job: &'a mut Option<JoinHandle<CaptureOutcome>>,
 }
 
 fn apply_touch_frame(
@@ -523,6 +553,7 @@ fn apply_touch_frame(
         preview_retry_at,
         frame_ready,
         background,
+        capture_job,
     } = context;
     let now = Instant::now();
     if frame.count > 0 && *previous_count == 0 {
@@ -651,14 +682,9 @@ fn apply_touch_frame(
                             1.2,
                         );
                     }
-                    Hit::Shutter if !current.dragged => take_photo(
-                        state,
-                        preview,
-                        display,
-                        camera_frame,
-                        preview_retry_at,
-                        frame_ready,
-                    ),
+                    Hit::Shutter if !current.dragged => {
+                        take_photo(state, preview, display, frame_ready, capture_job)
+                    }
                     Hit::PickerChoice(index) if state.picker_is_open(now) => {
                         match apply_picker(state, index) {
                             Ok(true) => {
@@ -774,32 +800,17 @@ pub fn run() -> io::Result<()> {
     let mut previous_count = 0;
     let mut gesture = None;
     let mut max_contacts = 0;
+    let mut capture_job: Option<JoinHandle<CaptureOutcome>> = None;
+    let mut first_preview_after_capture: Option<Instant> = None;
     while RUNNING.load(Ordering::Relaxed) {
         let fds = poll_descriptors(touch.fd(), preview.fd())?;
-        if fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
-            match preview.read_frame(&mut camera_frame) {
-                Ok(()) => {
-                    frame_ready = true;
-                    render_current(
-                        &mut display,
-                        &state,
-                        &preview,
-                        &camera_frame,
-                        frame_ready,
-                        &mut background,
-                    )?;
-                }
-                Err(error) => {
-                    eprintln!("camera-square-rs: preview read: {error}");
-                    let _ = preview.stop();
-                    frame_ready = false;
-                    state.show_message("CAMERA RETRY", 2.0);
-                    preview_retry_at = Instant::now() + Duration::from_millis(250);
-                }
-            }
-        }
         if fds[0].revents & libc::POLLIN != 0 {
             for touch_frame in touch.read_frames()? {
+                if capture_job.is_some() {
+                    previous_count = touch_frame.count;
+                    gesture = None;
+                    continue;
+                }
                 apply_touch_frame(
                     touch_frame,
                     &mut previous_count,
@@ -814,11 +825,81 @@ pub fn run() -> io::Result<()> {
                         preview_retry_at: &mut preview_retry_at,
                         frame_ready: &mut frame_ready,
                         background: &mut background,
+                        capture_job: &mut capture_job,
                     },
                 );
             }
         }
-        if preview.fd() < 0 && Instant::now() >= preview_retry_at {
+        // Touch wins when both descriptors are ready; rendering a full frame
+        // before the shutter event would add avoidable input latency.
+        if fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && preview.fd() >= 0
+        {
+            match preview.read_frame(&mut camera_frame) {
+                Ok(()) => {
+                    frame_ready = true;
+                    render_current(
+                        &mut display,
+                        &state,
+                        &preview,
+                        &camera_frame,
+                        frame_ready,
+                        &mut background,
+                    )?;
+                    if let Some(started) = first_preview_after_capture.take() {
+                        eprintln!(
+                            "camera-square-rs: capture timing first preview={}ms",
+                            started.elapsed().as_millis()
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!("camera-square-rs: preview read: {error}");
+                    let _ = preview.stop();
+                    frame_ready = false;
+                    state.show_message("CAMERA RETRY", 2.0);
+                    preview_retry_at = Instant::now() + Duration::from_millis(250);
+                }
+            }
+        }
+        if capture_job.as_ref().is_some_and(JoinHandle::is_finished) {
+            let outcome = capture_job.take().expect("finished capture job").join();
+            match outcome {
+                Ok(outcome) => {
+                    if let Some(error) = outcome.stop_error {
+                        eprintln!("camera-square-rs: preview stop: {error}");
+                    }
+                    state.show_message(
+                        if outcome.save_result.is_ok() {
+                            "SAVED"
+                        } else {
+                            "CAPTURE FAILED"
+                        },
+                        2.0,
+                    );
+                    if let Err(error) = outcome.save_result {
+                        eprintln!("camera-square-rs: capture failed: {error}");
+                    }
+                    match outcome.next_preview {
+                        Ok(next_preview) => {
+                            first_preview_after_capture = Some(outcome.started);
+                            camera_frame.resize(next_preview.frame_size, 0);
+                            preview = next_preview;
+                            preview_retry_at = Instant::now() + Duration::from_secs(1);
+                        }
+                        Err(error) => {
+                            eprintln!("camera-square-rs: restart preview: {error}");
+                            preview_retry_at = Instant::now() + Duration::from_secs(1);
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("camera-square-rs: capture worker panicked");
+                    state.show_message("CAPTURE FAILED", 2.0);
+                    preview_retry_at = Instant::now();
+                }
+            }
+        }
+        if capture_job.is_none() && preview.fd() < 0 && Instant::now() >= preview_retry_at {
             restart_preview(
                 &mut state,
                 &mut preview,
@@ -841,6 +922,9 @@ pub fn run() -> io::Result<()> {
                 &mut background,
             );
         }
+    }
+    if let Some(job) = capture_job {
+        let _ = job.join();
     }
     let _ = preview.stop();
     Ok(())
