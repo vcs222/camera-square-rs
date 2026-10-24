@@ -13,8 +13,8 @@ use crate::draw::Canvas;
 use crate::gallery;
 use crate::input::{TouchFrame, TouchInput};
 use crate::render::{
-    self, PreviewFrameLayout, picker_labels, picker_list_top, picker_scale, picker_selected,
-    shutter_display_y,
+    self, PreviewFrameLayout, picker_is_top_row, picker_labels, picker_list_top, picker_scale,
+    picker_selected, shutter_display_y,
 };
 use crate::settings::{
     ASPECT_RATIOS, CaptureFormat, DENOISE, HDR, ISOS, METERING, Picker, SHUTTERS, WHITE_BALANCES,
@@ -117,6 +117,11 @@ fn bottom_picker(x: i32, y: i32, width: usize, height: usize) -> Option<Picker> 
 fn hit_test(state: &UiState, x: i32, y: i32, width: usize, height: usize, now: Instant) -> Hit {
     if state.gallery_open {
         return Hit::Gallery;
+    }
+    if state.picker_is_open(now) && picker_is_top_row(state.picker) {
+        if let Some(choice) = picker_choice_at(state, x, y, width, height) {
+            return Hit::PickerChoice(choice);
+        }
     }
     if let Some(item) = top_item_at(x, y, width) {
         return match item {

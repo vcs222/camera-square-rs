@@ -19,6 +19,8 @@ const WB_PICKER: [&str; 6] = ["AUTO", "DAY", "CLOUDY", "INDOOR", "FLUOR", "TUNG"
 const WB_READOUT: [&str; 6] = ["AUTO", "DAY", "CLDY", "INDR", "FLOR", "TUNG"];
 const METERING_READOUT: [&str; 3] = ["CTR", "SPOT", "AVG"];
 const TOP_WIDTHS: [i32; 9] = [42, 38, 52, 64, 76, 112, 100, 108, 48];
+// Start below the centered controls' 64px hit area.
+const TOP_PICKER_LIST_TOP: i32 = 72;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PreviewFrameLayout {
@@ -168,13 +170,22 @@ pub fn picker_scale(width: usize, settings: &CameraSettings, picker: Picker) -> 
     (width as i32 / labels.len() as i32 / (6 * longest as i32)).clamp(1, 4)
 }
 
+pub const fn picker_is_top_row(picker: Picker) -> bool {
+    matches!(
+        picker,
+        Picker::Contrast | Picker::Brightness | Picker::Saturation | Picker::Denoise | Picker::Hdr
+    )
+}
+
 pub fn picker_list_top(
     width: usize,
     height: usize,
     settings: &CameraSettings,
     picker: Picker,
 ) -> i32 {
-    if picker == Picker::Ev {
+    if picker_is_top_row(picker) {
+        TOP_PICKER_LIST_TOP
+    } else if picker == Picker::Ev {
         height as i32 - 152
     } else {
         height as i32 - 112 - 7 * picker_scale(width, settings, picker)
@@ -190,6 +201,11 @@ pub fn shutter_display_y(width: usize, height: usize, state: &UiState, now: Inst
             7 * picker_scale(width, &state.camera, state.picker)
         };
         if state.shutter_y + 36 >= list_top && state.shutter_y - 36 <= list_top + list_height {
+            if picker_is_top_row(state.picker) {
+                return (list_top + list_height + 48)
+                    .min(height as i32 - 36)
+                    .max(36);
+            }
             return (list_top - 48).max(36);
         }
     }
