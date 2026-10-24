@@ -1,0 +1,19 @@
+[Unit]
+Description=Camera Square Rust camera UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+SupplementaryGroups=video input
+WorkingDirectory=%h
+ExecStart=%h/camera-ui-rust
+Restart=always
+RestartSec=2
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

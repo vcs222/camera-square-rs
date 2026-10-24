@@ -1,0 +1,253 @@
+//! Process-backed camera access. The UI owns one preview and stops it before capture.
+
+use crate::settings::{
+    ASPECT_RATIOS, CameraSettings, DENOISE, HDR, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
+};
+use std::fs;
+use std::io::{self, Read};
+use std::os::fd::{AsRawFd, RawFd};
+use std::path::Path;
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+fn validate(settings: &CameraSettings) -> io::Result<()> {
+    if settings.aspect >= ASPECT_RATIOS.len()
+        || settings.shutter >= SHUTTERS.len()
+        || settings.iso >= ISOS.len()
+        || settings.white_balance >= WHITE_BALANCES.len()
+        || settings.metering >= METERING.len()
+        || settings.denoise >= DENOISE.len()
+        || settings.hdr >= HDR.len()
+        || settings.sharpness >= 5
+        || settings.contrast >= 5
+        || settings.brightness >= 5
+        || settings.saturation >= 5
+        || !(-30..=30).contains(&settings.ev_thirds)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid camera setting",
+        ));
+    }
+    Ok(())
+}
+
+fn apply_settings(command: &mut Command, settings: &CameraSettings) {
+    command
+        .args(["--ev", &format!("{:.2}", settings.ev_value())])
+        .args(["--metering", METERING[settings.metering].value])
+        .args([
+            "--sharpness",
+            &format!("{:.1}", settings.sharpness as f32 / 2.0),
+        ])
+        .args([
+            "--contrast",
+            &format!("{:.1}", settings.contrast as f32 / 2.0),
+        ])
+        .args([
+            "--brightness",
+            &format!("{:.1}", settings.brightness as f32 / 2.0 - 1.0),
+        ])
+        .args([
+            "--saturation",
+            &format!("{:.1}", settings.saturation as f32 / 2.0),
+        ])
+        .args(["--denoise", DENOISE[settings.denoise].value])
+        .args(["--hdr", HDR[settings.hdr].value])
+        .args(["--awb", WHITE_BALANCES[settings.white_balance].value]);
+    if SHUTTERS[settings.shutter].value > 0 {
+        command.args(["--shutter", &SHUTTERS[settings.shutter].value.to_string()]);
+    }
+    if ISOS[settings.iso].value > 0.0 {
+        command.args(["--gain", &format!("{:.1}", ISOS[settings.iso].value)]);
+    }
+}
+
+/// Ask rpicam to shut down cleanly, then force termination after four seconds.
+/// Reaping is mandatory even after forced termination, so camera ownership cannot leak.
+fn stop_child(child: &mut Child) -> io::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+    // SAFETY: The PID belongs to our unreaped child. No memory is accessed.
+    let result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
+    let signal_error = if result < 0 {
+        let error = io::Error::last_os_error();
+        (error.raw_os_error() != Some(libc::ESRCH)).then_some(error)
+    } else {
+        None
+    };
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        if child.try_wait()?.is_some() {
+            return signal_error.map_or(Ok(()), Err);
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    // A child may exit between try_wait and kill; always wait to collect its status.
+    let kill_result = child.kill();
+    let wait_result = child.wait();
+    wait_result?;
+    if let Err(error) = kill_result {
+        if error.kind() != io::ErrorKind::InvalidInput && error.raw_os_error() != Some(libc::ESRCH)
+        {
+            return Err(error);
+        }
+    }
+    signal_error.map_or(Ok(()), Err)
+}
+
+pub struct Preview {
+    child: Option<Child>,
+    output: Option<ChildStdout>,
+    pub width: usize,
+    pub height: usize,
+    pub luma_stride: usize,
+    pub chroma_stride: usize,
+    pub frame_size: usize,
+}
+
+impl Preview {
+    pub fn start(settings: &CameraSettings, screen_width: usize) -> io::Result<Self> {
+        validate(settings)?;
+        if !(2..=16_384).contains(&screen_width) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid preview width",
+            ));
+        }
+        let (width, height) = settings.preview_dimensions(screen_width);
+        let luma_stride = (width + 63) & !63;
+        let chroma_stride = luma_stride / 2;
+        let frame_size = luma_stride * height * 3 / 2;
+        let mut command = Command::new("/usr/bin/rpicam-vid");
+        command
+            .args(["--timeout", "0", "--nopreview", "--codec", "yuv420"])
+            .args([
+                "--width",
+                &width.to_string(),
+                "--height",
+                &height.to_string(),
+            ])
+            .args(["--framerate", "12", "--flush", "--output", "-"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        apply_settings(&mut command, settings);
+        let mut child = command.spawn()?;
+        let output = child.stdout.take();
+        Ok(Self {
+            child: Some(child),
+            output,
+            width,
+            height,
+            luma_stride,
+            chroma_stride,
+            frame_size,
+        })
+    }
+
+    /// The stdout descriptor can be polled together with the touch input descriptor.
+    pub fn fd(&self) -> RawFd {
+        self.output.as_ref().map_or(-1, AsRawFd::as_raw_fd)
+    }
+
+    /// Read one complete, stride-padded YUV420 frame after stdout becomes readable.
+    pub fn read_frame(&mut self, frame: &mut [u8]) -> io::Result<()> {
+        if frame.len() != self.frame_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "incorrect preview buffer size",
+            ));
+        }
+        self.output
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "preview stopped"))?
+            .read_exact(frame)
+    }
+
+    pub fn stop(&mut self) -> io::Result<()> {
+        // Close stdout first so the camera process can release its pipe resources.
+        self.output.take();
+        match self.child.take() {
+            Some(mut child) => stop_child(&mut child),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for Preview {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
+/// Capture to a .jpg path and, when requested, its sibling .dng path.
+/// DNG-only capture removes rpicam's accompanying JPEG after verifying both outputs.
+pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) -> io::Result<()> {
+    validate(settings)?;
+    let output_path = output_path.as_ref();
+    if output_path.extension().and_then(|ext| ext.to_str()) != Some("jpg") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "capture output must end in .jpg",
+        ));
+    }
+    let raw_path = output_path.with_extension("dng");
+    // Never overwrite an existing photograph, regardless of the selected capture format.
+    for path in [output_path, raw_path.as_path()] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "capture output exists",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let aspect = ASPECT_RATIOS[settings.aspect];
+    let mut command = Command::new("/usr/bin/rpicam-still");
+    command
+        .args(["--nopreview", "--timeout", "1200", "--quality", "95"])
+        .args([
+            "--width",
+            &aspect.still_width.to_string(),
+            "--height",
+            &aspect.still_height.to_string(),
+        ])
+        .arg("--output")
+        .arg(output_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    apply_settings(&mut command, settings);
+    if settings.capture_format.captures_raw() {
+        command.arg("--raw");
+    }
+    let mut child = command.spawn()?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = stop_child(&mut child);
+            return Err(error);
+        }
+    };
+    if !status.success() {
+        return Err(io::Error::other(format!("rpicam-still failed: {status}")));
+    }
+    if !output_path.is_file() || (settings.capture_format.captures_raw() && !raw_path.is_file()) {
+        return Err(io::Error::other(
+            "camera did not save all requested outputs",
+        ));
+    }
+    if settings.capture_format == crate::settings::CaptureFormat::Dng {
+        fs::remove_file(output_path)?;
+    }
+    Ok(())
+}
