@@ -1,7 +1,7 @@
 //! Camera access with a persistent native session and rpicam compatibility path.
 
 use crate::settings::{
-    ASPECT_RATIOS, CameraSettings, DENOISE, HDR, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
+    ASPECT_RATIOS, CameraSettings, DENOISE, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
 };
 use std::fs;
 use std::io::{self, Read};
@@ -37,7 +37,6 @@ fn validate(settings: &CameraSettings) -> io::Result<()> {
         || settings.white_balance >= WHITE_BALANCES.len()
         || settings.metering >= METERING.len()
         || settings.denoise >= DENOISE.len()
-        || settings.hdr >= HDR.len()
         || settings.sharpness >= 5
         || settings.contrast >= 5
         || settings.brightness >= 5
@@ -73,7 +72,6 @@ fn apply_settings(command: &mut Command, settings: &CameraSettings) {
             &format!("{:.1}", settings.saturation as f32 / 2.0),
         ])
         .args(["--denoise", DENOISE[settings.denoise].value])
-        .args(["--hdr", HDR[settings.hdr].value])
         .args(["--awb", WHITE_BALANCES[settings.white_balance].value]);
     if SHUTTERS[settings.shutter].value > 0 {
         command.args(["--shutter", &SHUTTERS[settings.shutter].value.to_string()]);

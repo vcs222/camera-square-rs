@@ -16,7 +16,7 @@ use libcamera::{
     controls::{
         AeMeteringMode, AnalogueGain, AnalogueGainMode, AwbMode, Brightness,
         ColourCorrectionMatrix, ColourGains, Contrast, ControlId, ExposureTime, ExposureTimeMode,
-        ExposureValue, HdrMode, NoiseReductionMode, Saturation, SensorBlackLevels, Sharpness,
+        ExposureValue, NoiseReductionMode, Saturation, SensorBlackLevels, Sharpness,
     },
     formats,
     framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
@@ -267,11 +267,6 @@ fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Resul
         };
         controls.set(mode).map_err(camera_error)?;
     }
-    if settings.hdr != 0 {
-        controls
-            .set(HdrMode::SingleExposure)
-            .map_err(camera_error)?;
-    }
     Ok(())
 }
 
@@ -301,17 +296,6 @@ fn camera_loop(
             == 0
     {
         return Err(io::Error::other("native denoise control unavailable"));
-    }
-    if settings.hdr != 0 {
-        if model.contains("imx477") {
-            return Err(io::Error::other("HQ Camera HDR mode unavailable"));
-        }
-        if model.contains("imx708") && settings.hdr == 1 {
-            return Err(io::Error::other("sensor HDR requires rpicam configuration"));
-        }
-        if camera.controls().count(ControlId::HdrMode as u32) == 0 {
-            return Err(io::Error::other("native HDR control unavailable"));
-        }
     }
     let wants_raw = settings.capture_format.captures_raw();
     let roles = if wants_raw {

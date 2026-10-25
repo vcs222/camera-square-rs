@@ -15,11 +15,11 @@ use crate::draw::Canvas;
 use crate::gallery;
 use crate::input::{TouchFrame, TouchInput};
 use crate::render::{
-    self, PreviewFrameLayout, picker_is_top_row, picker_labels, picker_list_top, picker_scale,
-    picker_selected, shutter_display_y,
+    self, PreviewFrameLayout, TOP_GAP, TOP_WIDTHS, picker_is_top_row, picker_labels,
+    picker_list_top, picker_scale, picker_selected, shutter_display_y,
 };
 use crate::settings::{
-    ASPECT_RATIOS, CaptureFormat, DENOISE, HDR, ISOS, METERING, Picker, SHUTTERS, WHITE_BALANCES,
+    ASPECT_RATIOS, CaptureFormat, DENOISE, ISOS, METERING, Picker, SHUTTERS, WHITE_BALANCES,
 };
 use crate::state::UiState;
 
@@ -78,20 +78,18 @@ fn top_item_at(x: i32, y: i32, width: usize) -> Option<usize> {
         return Some(0);
     }
     if (0..96).contains(&y) && x >= width as i32 - 60 {
-        return Some(8);
+        return Some(TOP_WIDTHS.len() - 1);
     }
     if !(0..64).contains(&y) {
         return None;
     }
-    let widths = [42, 38, 52, 64, 76, 112, 100, 108, 48];
-    let gap = 8;
-    let total: i32 = widths.iter().sum::<i32>() + gap * (widths.len() as i32 - 1);
+    let total: i32 = TOP_WIDTHS.iter().sum::<i32>() + TOP_GAP * (TOP_WIDTHS.len() as i32 - 1);
     let mut left = (width as i32 - total) / 2;
-    for (index, item_width) in widths.into_iter().enumerate() {
-        if x >= left - gap / 2 && x < left + item_width + gap / 2 {
+    for (index, item_width) in TOP_WIDTHS.into_iter().enumerate() {
+        if x >= left - TOP_GAP / 2 && x < left + item_width + TOP_GAP / 2 {
             return Some(index);
         }
-        left += item_width + gap;
+        left += item_width + TOP_GAP;
     }
     None
 }
@@ -133,8 +131,7 @@ fn hit_test(state: &UiState, x: i32, y: i32, width: usize, height: usize, now: I
             3 => Hit::Control(Picker::Brightness),
             4 => Hit::Control(Picker::Saturation),
             5 => Hit::Control(Picker::Denoise),
-            6 => Hit::Control(Picker::Hdr),
-            7 => Hit::Grid,
+            6 => Hit::Grid,
             _ => Hit::Peak,
         };
     }
@@ -211,7 +208,6 @@ fn apply_picker(state: &mut UiState, index: usize) -> io::Result<bool> {
         Picker::Brightness if index < 5 => replace(&mut camera.brightness, index),
         Picker::Saturation if index < 5 => replace(&mut camera.saturation, index),
         Picker::Denoise if index < DENOISE.len() => replace(&mut camera.denoise, index),
-        Picker::Hdr if index < HDR.len() => replace(&mut camera.hdr, index),
         _ => return Ok(false),
     };
     state.refresh_picker_timeout();
@@ -782,7 +778,6 @@ fn picker_name(picker: Picker) -> &'static str {
         Picker::Brightness => "B",
         Picker::Saturation => "SAT",
         Picker::Denoise => "DN",
-        Picker::Hdr => "HDR",
     }
 }
 
@@ -996,4 +991,17 @@ pub fn run() -> io::Result<()> {
     }
     let _ = preview.stop();
     Ok(())
+}
+
+#[cfg(test)]
+mod top_row_tests {
+    use super::*;
+
+    #[test]
+    fn rendered_controls_match_touch_targets() {
+        for (index, width) in TOP_WIDTHS.into_iter().enumerate() {
+            let center = render::top_item_x(720, index) + width / 2;
+            assert_eq!(top_item_at(center, 30, 720), Some(index));
+        }
+    }
 }
