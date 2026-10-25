@@ -403,6 +403,19 @@ fn render_gallery(canvas: &mut Canvas<'_>, state: &UiState) {
             PAPER,
         );
     }
+    if let Some(index) = state.gallery_index {
+        if let Some(photo) = state.gallery.get(index) {
+            let bar_top = canvas.height as i32 - 44;
+            canvas.fill_rect(0, bar_top, canvas.width as i32, 44, INK);
+            canvas.text(12, bar_top + 12, photo.format.label(), 2, PAPER);
+            if let Some(stem) = photo.path.file_stem().and_then(|name| name.to_str()) {
+                let name = stem.replace('_', " ").to_ascii_uppercase();
+                canvas.text(160, bar_top + 15, &name, 1, PAPER);
+            }
+            let position = format!("{}/{}", index + 1, state.gallery.len());
+            canvas.text(canvas.width as i32 - 92, bar_top + 15, &position, 1, PAPER);
+        }
+    }
     for (dx, dy, color) in [(1, 1, INK), (0, 0, PAPER)] {
         canvas.line(22 + dx, 35 + dy, 62 + dx, 35 + dy, color);
         canvas.line(22 + dx, 35 + dy, 36 + dx, 21 + dy, color);

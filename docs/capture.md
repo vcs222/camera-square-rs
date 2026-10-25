@@ -2,9 +2,9 @@
 
 ## Still capture
 
-Still photos use the selected camera settings and aspect ratio. JPEG is the default format; DNG captures use the camera stack's raw Bayer output. Selecting DNG removes the accompanying temporary JPEG after a successful capture. JPEG+DNG keeps both files with the same base name. The gallery displays JPEGs only.
+Still photos use the selected camera settings and aspect ratio. JPEG is the default format; DNG captures use the camera stack's raw Bayer output. DNG-only capture saves the raw file in the camera directory and a processed JPEG preview in its hidden `.gallery` subdirectory. JPEG+DNG keeps both full files with the same base name in the camera directory. The gallery displays JPEG previews and labels each entry `JPG`, `DNG`, or `JPG+DNG`.
 
-With the native camera build, default 4:3 JPEG capture uses a persistent libcamera session and saves the image with TurboJPEG while preview continues. Native JPEGs currently omit EXIF metadata. For adjusted settings, other aspect ratios, and DNG, the app pauses the preview while `rpicam-still` owns the camera, then starts the preview again. Capture runs on a worker thread; touch input is ignored until it finishes. The process path logs preview-stop, still-process, preview-restart, total-capture, and first-preview-after-capture timings.
+With the native camera build, JPEG, DNG, and paired capture use a persistent libcamera session where supported. JPEGs are encoded with TurboJPEG; native DNGs contain unpacked 12-bit Bayer data and camera colour metadata. Preview continues while files are encoded and written. Native JPEG and DNG files include capture time, exposure, and nominal ISO metadata. Unsupported camera controls and stream configurations use `rpicam`: the app pauses preview while `rpicam-still` owns the camera, then restarts it. Capture runs on a worker thread; touch input is ignored until it finishes. The process path logs preview-stop, still-process, preview-restart, total-capture, and first-preview-after-capture timings.
 
 ## Capture tuning
 

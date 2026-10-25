@@ -7,10 +7,10 @@ A touchscreen camera for the Raspberry Pi Zero 2 W, HQ Camera, and HyperPixel 4 
 
 ## Highlights
 
-- Fast live preview and JPEG capture through a persistent native libcamera session at the default 4:3 settings.
+- Fast live preview and JPEG or DNG capture through a persistent native libcamera session on the tested Pi.
 - On-screen controls for shutter, gain, white balance, metering, EV, and image adjustments.
 - JPEG, raw DNG, and paired JPEG+DNG capture.
-- Composition grids, aspect-ratio framing, focus peaking, and an on-device gallery.
+- Composition grids, aspect-ratio framing, focus peaking, and an on-device gallery that labels JPEG, DNG, and paired captures.
 - A small Rust application designed to run directly on Raspberry Pi OS.
 
 ## Hardware and software

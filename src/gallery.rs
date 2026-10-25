@@ -6,13 +6,29 @@ use std::path::Path;
 
 use jpeg_decoder::{Decoder, PixelFormat};
 
-use crate::state::PhotoEntry;
+use crate::state::{PhotoEntry, PhotoFormat};
 
 const MAX_GALLERY_PHOTOS: usize = 512;
 const MAX_DECODE_BYTES: usize = 64 * 1024 * 1024;
 
 pub fn scan(directory: &Path) -> io::Result<Vec<PhotoEntry>> {
     let mut photos = Vec::new();
+    scan_jpegs(directory, false, &mut photos)?;
+    let previews = directory.join(".gallery");
+    if fs::symlink_metadata(&previews).is_ok_and(|metadata| metadata.is_dir()) {
+        scan_jpegs(&previews, true, &mut photos)?;
+    }
+    photos.sort_unstable_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| b.path.cmp(&a.path))
+    });
+    photos.truncate(MAX_GALLERY_PHOTOS);
+    photos.reverse();
+    Ok(photos)
+}
+
+fn scan_jpegs(directory: &Path, dng_preview: bool, photos: &mut Vec<PhotoEntry>) -> io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
@@ -32,15 +48,33 @@ pub fn scan(directory: &Path) -> io::Result<Vec<PhotoEntry>> {
         let Ok(modified) = metadata.modified() else {
             continue;
         };
-        photos.push(PhotoEntry { path, modified });
+        let raw = if dng_preview {
+            directory
+                .parent()
+                .unwrap_or(directory)
+                .join(path.file_name().unwrap_or_default())
+                .with_extension("dng")
+        } else {
+            path.with_extension("dng")
+        };
+        let has_raw = fs::symlink_metadata(&raw).is_ok_and(|metadata| metadata.is_file());
+        if dng_preview && !has_raw {
+            continue;
+        }
+        let format = if dng_preview {
+            PhotoFormat::Dng
+        } else if has_raw {
+            PhotoFormat::JpegAndDng
+        } else {
+            PhotoFormat::Jpeg
+        };
+        photos.push(PhotoEntry {
+            path,
+            modified,
+            format,
+        });
     }
-    photos.sort_unstable_by(|a, b| {
-        a.modified
-            .cmp(&b.modified)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    photos.truncate(MAX_GALLERY_PHOTOS);
-    Ok(photos)
+    Ok(())
 }
 
 fn invalid_data(error: impl std::fmt::Display) -> io::Error {
@@ -54,13 +88,19 @@ pub fn decode_rgb(path: &Path) -> io::Result<(Vec<u8>, usize, usize)> {
     let info = decoder
         .info()
         .ok_or_else(|| invalid_data("JPEG has no image metadata"))?;
-    // Match the C gallery's quarter-size decoding to avoid retaining full
-    // sensor-resolution RGB images on the Pi Zero.
+    // Keep compact DNG gallery previews at display resolution; quarter-size
+    // decode is still needed for full sensor-resolution JPEGs on the Pi Zero.
+    let (target_width, target_height) =
+        if u32::from(info.width) * u32::from(info.height) <= 1_000_000 {
+            (info.width, info.height)
+        } else {
+            (
+                info.width.div_ceil(4).max(1),
+                info.height.div_ceil(4).max(1),
+            )
+        };
     decoder
-        .scale(
-            info.width.div_ceil(4).max(1),
-            info.height.div_ceil(4).max(1),
-        )
+        .scale(target_width, target_height)
         .map_err(invalid_data)?;
     let mut pixels = decoder.decode().map_err(invalid_data)?;
     let info = decoder
@@ -114,4 +154,26 @@ pub fn decode_rgb(path: &Path) -> io::Result<(Vec<u8>, usize, usize)> {
         PixelFormat::L16 => return Err(invalid_data("16-bit JPEG is unsupported")),
     }
     Ok((pixels, width, height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_dng_gallery_previews() {
+        let directory =
+            std::env::temp_dir().join(format!("camera-square-gallery-test-{}", std::process::id()));
+        let previews = directory.join(".gallery");
+        fs::create_dir_all(&previews).unwrap();
+        fs::write(directory.join("regular.jpg"), []).unwrap();
+        fs::write(directory.join("raw.dng"), []).unwrap();
+        fs::write(previews.join("raw.jpg"), []).unwrap();
+        let photos = scan(&directory).unwrap();
+        assert_eq!(photos.len(), 2);
+        assert!(photos.iter().any(
+            |entry| entry.path == previews.join("raw.jpg") && entry.format == PhotoFormat::Dng
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
