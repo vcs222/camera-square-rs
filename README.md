@@ -50,11 +50,11 @@ See the [controls guide](docs/controls.md) for setting ranges and behavior, and 
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo check --all-targets --all-features
+cargo clippy --all-targets -- -D warnings
+cargo check --all-targets
 ```
 
-The GitHub Actions workflow also checks the declared minimum Rust version and audits dependencies. Host builds cannot verify camera, framebuffer, or touchscreen behavior; include your hardware and OS when reporting device-specific issues. See [contributing](CONTRIBUTING.md) and the [security policy](SECURITY.md).
+The GitHub Actions workflow also checks the declared minimum Rust version, audits dependencies, and compiles the experimental [native camera probe](docs/native-camera.md) on Linux ARM64. Host builds cannot verify camera, framebuffer, or touchscreen behavior; include your hardware and OS when reporting device-specific issues. See [contributing](CONTRIBUTING.md) and the [security policy](SECURITY.md).
 
 ## License
 
