@@ -6,8 +6,12 @@ mod display;
 mod draw;
 mod gallery;
 mod input;
+#[cfg(any(test, all(target_os = "linux", feature = "native-camera")))]
+mod jpeg_exif;
 #[cfg(all(target_os = "linux", feature = "native-camera"))]
 mod native_camera;
+#[cfg(all(target_os = "linux", feature = "native-camera"))]
+mod native_dng;
 mod render;
 mod settings;
 mod state;

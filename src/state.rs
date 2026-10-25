@@ -37,6 +37,24 @@ impl CompositionGrid {
 pub struct PhotoEntry {
     pub path: PathBuf,
     pub modified: std::time::SystemTime,
+    pub format: PhotoFormat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhotoFormat {
+    Jpeg,
+    Dng,
+    JpegAndDng,
+}
+
+impl PhotoFormat {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Jpeg => "JPG",
+            Self::Dng => "DNG",
+            Self::JpegAndDng => "JPG+DNG",
+        }
+    }
 }
 
 pub struct UiState {

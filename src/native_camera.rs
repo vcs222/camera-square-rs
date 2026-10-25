@@ -1,4 +1,4 @@
-//! Opt-in persistent libcamera session for the default JPEG camera settings.
+//! Persistent libcamera session for JPEG and raw camera settings.
 //! The camera stays on one thread; the UI receives the latest viewfinder frame
 //! through an eventfd and requests a still with a channel.
 
@@ -13,21 +13,40 @@ use std::time::{Duration, Instant};
 use libcamera::{
     camera_manager::CameraManager,
     color_space::ColorSpace,
+    controls::{
+        AeMeteringMode, AnalogueGain, AnalogueGainMode, AwbMode, Brightness,
+        ColourCorrectionMatrix, ColourGains, Contrast, ControlId, ExposureTime, ExposureTimeMode,
+        ExposureValue, HdrMode, NoiseReductionMode, Saturation, SensorBlackLevels, Sharpness,
+    },
     formats,
     framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
     framebuffer_map::MemoryMappedFrameBuffer,
     geometry::Size,
-    request::{RequestStatus, ReuseFlag},
+    properties::Model,
+    request::{Request, RequestStatus, ReuseFlag},
     stream::StreamRole,
 };
 use turbojpeg::{Compressor, Subsamp, YuvPlanesImage};
 
+use crate::jpeg_exif::{PhotoMetadata, add_exif};
+use crate::native_dng::{RawCapture, save_dng};
 use crate::native_yuv::{OwnedYuv420, Yuv420Layout, copy_yuv420};
+use crate::settings::{ASPECT_RATIOS, CameraSettings, CaptureFormat, ISOS, SHUTTERS};
 
-const STILL_WIDTH: usize = 4056;
-const STILL_HEIGHT: usize = 3040;
-const VIEW_WIDTH: usize = 720;
-const VIEW_HEIGHT: usize = 540;
+#[derive(Clone, Copy)]
+struct NativeSize {
+    still_width: usize,
+    still_height: usize,
+    view_width: usize,
+    view_height: usize,
+    view_stride: usize,
+}
+
+struct CapturedFrames {
+    still: Option<OwnedYuv420>,
+    gallery: Option<Vec<u8>>,
+    raw: Option<RawCapture>,
+}
 
 enum Command {
     Capture {
@@ -46,14 +65,25 @@ pub struct NativePreview {
 }
 
 impl NativePreview {
-    pub fn start(frame_size: usize) -> io::Result<Self> {
-        let expected_size = VIEW_WIDTH * VIEW_HEIGHT * 3 / 2;
-        // The viewfinder has 768-byte Y rows, 384-byte chroma rows.
-        let expected_padded_size = 768 * VIEW_HEIGHT * 3 / 2;
-        if frame_size != expected_padded_size || frame_size < expected_size {
+    pub fn start(
+        settings: CameraSettings,
+        view_width: usize,
+        view_height: usize,
+        view_stride: usize,
+    ) -> io::Result<Self> {
+        let aspect = ASPECT_RATIOS[settings.aspect];
+        let size = NativeSize {
+            still_width: aspect.still_width as usize,
+            still_height: aspect.still_height as usize,
+            view_width,
+            view_height,
+            view_stride,
+        };
+        let frame_size = view_stride * view_height * 3 / 2;
+        if view_width % 2 != 0 || view_height % 2 != 0 || view_stride < view_width {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "native preview requires 720x540 YUV420 with 768-byte stride",
+                "invalid native preview dimensions",
             ));
         }
         // SAFETY: eventfd returns a fresh descriptor; OwnedFd takes ownership once.
@@ -75,6 +105,8 @@ impl NativePreview {
                 thread_latest,
                 receiver,
                 &ready_tx,
+                settings,
+                size,
             ) {
                 if let Ok(mut failure) = thread_failure.lock() {
                     *failure = Some(error.to_string());
@@ -172,11 +204,84 @@ impl Drop for NativePreview {
     }
 }
 
+fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Result<()> {
+    let controls = request.controls_mut();
+    let exposure_mode = if settings.shutter == 0 {
+        ExposureTimeMode::Auto
+    } else {
+        ExposureTimeMode::Manual
+    };
+    let gain_mode = if settings.iso == 0 {
+        AnalogueGainMode::Auto
+    } else {
+        AnalogueGainMode::Manual
+    };
+    controls.set(exposure_mode).map_err(camera_error)?;
+    controls.set(gain_mode).map_err(camera_error)?;
+    if settings.shutter != 0 {
+        controls
+            .set(ExposureTime(SHUTTERS[settings.shutter].value))
+            .map_err(camera_error)?;
+    }
+    if settings.iso != 0 {
+        controls
+            .set(AnalogueGain(ISOS[settings.iso].value))
+            .map_err(camera_error)?;
+    }
+    let awb = match settings.white_balance {
+        0 => AwbMode::AwbAuto,
+        1 => AwbMode::AwbDaylight,
+        2 => AwbMode::AwbCloudy,
+        3 => AwbMode::AwbIndoor,
+        4 => AwbMode::AwbFluorescent,
+        _ => AwbMode::AwbTungsten,
+    };
+    controls.set(awb).map_err(camera_error)?;
+    let metering = match settings.metering {
+        0 => AeMeteringMode::MeteringCentreWeighted,
+        1 => AeMeteringMode::MeteringSpot,
+        _ => AeMeteringMode::MeteringMatrix,
+    };
+    controls.set(metering).map_err(camera_error)?;
+    controls
+        .set(ExposureValue(settings.ev_value()))
+        .map_err(camera_error)?;
+    controls
+        .set(Sharpness(settings.sharpness as f32 / 2.0))
+        .map_err(camera_error)?;
+    controls
+        .set(Contrast(settings.contrast as f32 / 2.0))
+        .map_err(camera_error)?;
+    controls
+        .set(Brightness(settings.brightness as f32 / 2.0 - 1.0))
+        .map_err(camera_error)?;
+    controls
+        .set(Saturation(settings.saturation as f32 / 2.0))
+        .map_err(camera_error)?;
+    if settings.denoise != 0 {
+        let mode = match settings.denoise {
+            1 => NoiseReductionMode::Off,
+            2 => NoiseReductionMode::Minimal,
+            3 => NoiseReductionMode::Fast,
+            _ => NoiseReductionMode::HighQuality,
+        };
+        controls.set(mode).map_err(camera_error)?;
+    }
+    if settings.hdr != 0 {
+        controls
+            .set(HdrMode::SingleExposure)
+            .map_err(camera_error)?;
+    }
+    Ok(())
+}
+
 fn camera_loop(
     event: Arc<OwnedFd>,
     latest: Arc<Mutex<Vec<u8>>>,
     commands: mpsc::Receiver<Command>,
     ready: &mpsc::SyncSender<io::Result<()>>,
+    settings: CameraSettings,
+    size: NativeSize,
 ) -> io::Result<()> {
     let manager = CameraManager::new().map_err(camera_error)?;
     let cameras = manager.cameras();
@@ -184,12 +289,52 @@ fn camera_loop(
         .get(0)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no camera found"))?;
     let mut camera = camera.acquire().map_err(camera_error)?;
+    let model = camera
+        .properties()
+        .get::<Model>()
+        .map(|value| value.0)
+        .unwrap_or_else(|_| "Raspberry Pi Camera".to_string());
+    if settings.denoise != 0
+        && camera
+            .controls()
+            .count(ControlId::NoiseReductionMode as u32)
+            == 0
+    {
+        return Err(io::Error::other("native denoise control unavailable"));
+    }
+    if settings.hdr != 0 {
+        if model.contains("imx477") {
+            return Err(io::Error::other("HQ Camera HDR mode unavailable"));
+        }
+        if model.contains("imx708") && settings.hdr == 1 {
+            return Err(io::Error::other("sensor HDR requires rpicam configuration"));
+        }
+        if camera.controls().count(ControlId::HdrMode as u32) == 0 {
+            return Err(io::Error::other("native HDR control unavailable"));
+        }
+    }
+    let wants_raw = settings.capture_format.captures_raw();
+    let roles = if wants_raw {
+        vec![
+            StreamRole::StillCapture,
+            StreamRole::ViewFinder,
+            StreamRole::Raw,
+        ]
+    } else {
+        vec![StreamRole::StillCapture, StreamRole::ViewFinder]
+    };
     let mut config = camera
-        .generate_configuration(&[StreamRole::StillCapture, StreamRole::ViewFinder])
+        .generate_configuration(&roles)
         .ok_or_else(|| io::Error::other("cannot generate native camera configuration"))?;
     for (index, size) in [
-        (0, Size::new(STILL_WIDTH as u32, STILL_HEIGHT as u32)),
-        (1, Size::new(VIEW_WIDTH as u32, VIEW_HEIGHT as u32)),
+        (
+            0,
+            Size::new(size.still_width as u32, size.still_height as u32),
+        ),
+        (
+            1,
+            Size::new(size.view_width as u32, size.view_height as u32),
+        ),
     ] {
         let mut stream = config
             .get_mut(index)
@@ -199,13 +344,27 @@ fn camera_loop(
         stream.set_color_space(Some(ColorSpace::sycc()));
         stream.set_buffer_count(2);
     }
+    if wants_raw {
+        let mut raw = config
+            .get_mut(2)
+            .ok_or_else(|| io::Error::other("missing native raw stream"))?;
+        raw.set_pixel_format(formats::SBGGR12);
+        raw.set_size(Size::new(4056, 3040));
+        raw.set_buffer_count(2);
+    }
     let status = config.validate();
     if status.is_invalid() {
         return Err(io::Error::other("invalid native camera configuration"));
     }
     for (index, expected) in [
-        (0, Size::new(STILL_WIDTH as u32, STILL_HEIGHT as u32)),
-        (1, Size::new(VIEW_WIDTH as u32, VIEW_HEIGHT as u32)),
+        (
+            0,
+            Size::new(size.still_width as u32, size.still_height as u32),
+        ),
+        (
+            1,
+            Size::new(size.view_width as u32, size.view_height as u32),
+        ),
     ] {
         let stream = config
             .get(index)
@@ -222,6 +381,35 @@ fn camera_loop(
             )));
         }
     }
+    let raw_config = if wants_raw {
+        Some(
+            config
+                .get(2)
+                .ok_or_else(|| io::Error::other("missing validated raw stream"))?,
+        )
+    } else {
+        None
+    };
+    let raw_layout = raw_config.and_then(|raw| {
+        let format = raw.get_pixel_format();
+        let cfa = if format == formats::SBGGR12 {
+            Some([2, 1, 1, 0])
+        } else if format == formats::SRGGB12 {
+            Some([0, 1, 1, 2])
+        } else if format == formats::SGRBG12 {
+            Some([1, 0, 2, 1])
+        } else if format == formats::SGBRG12 {
+            Some([1, 2, 0, 1])
+        } else {
+            None
+        };
+        cfa.map(|cfa| (raw.get_size(), raw.get_stride() as usize, cfa))
+    });
+    if wants_raw && raw_layout.is_none() {
+        return Err(io::Error::other(
+            "native raw stream is not unpacked 12-bit Bayer",
+        ));
+    }
     camera.configure(&mut config).map_err(camera_error)?;
     let still_config = config
         .get(0)
@@ -231,7 +419,7 @@ fn camera_loop(
         .ok_or_else(|| io::Error::other("missing view stream"))?;
     let still_stride = still_config.get_stride() as usize;
     let view_stride = view_config.get_stride() as usize;
-    if view_stride != 768 || still_stride % 2 != 0 {
+    if view_stride != size.view_stride || still_stride % 2 != 0 {
         return Err(io::Error::other(format!(
             "unsupported native camera strides: still={still_stride}, view={view_stride}"
         )));
@@ -242,9 +430,24 @@ fn camera_loop(
     let view_stream = view_config
         .stream()
         .ok_or_else(|| io::Error::other("missing view stream handle"))?;
+    let raw_stream = if wants_raw {
+        Some(
+            config
+                .get(2)
+                .and_then(|raw| raw.stream())
+                .ok_or_else(|| io::Error::other("missing raw stream handle"))?,
+        )
+    } else {
+        None
+    };
     let mut allocator = FrameBufferAllocator::new(&camera);
     let still_buffers = allocator.alloc(&still_stream).map_err(camera_error)?;
     let view_buffers = allocator.alloc(&view_stream).map_err(camera_error)?;
+    let mut raw_buffers = if let Some(raw) = &raw_stream {
+        allocator.alloc(raw).map_err(camera_error)?.into_iter()
+    } else {
+        Vec::new().into_iter()
+    };
     if still_buffers.len() < 2 || view_buffers.len() < 2 {
         return Err(io::Error::other(
             "native camera needs two buffers per stream",
@@ -267,11 +470,23 @@ fn camera_loop(
                 MemoryMappedFrameBuffer::new(view).map_err(camera_error)?,
             )
             .map_err(camera_error)?;
+        if let Some(raw) = &raw_stream {
+            let buffer = raw_buffers
+                .next()
+                .ok_or_else(|| io::Error::other("not enough raw buffers"))?;
+            request
+                .add_buffer(
+                    raw,
+                    MemoryMappedFrameBuffer::new(buffer).map_err(camera_error)?,
+                )
+                .map_err(camera_error)?;
+        }
         requests.push(request);
     }
     let completed = camera.subscribe_request_completed();
     camera.start(None).map_err(camera_error)?;
-    for request in requests {
+    for mut request in requests {
+        apply_controls(&mut request, &settings)?;
         camera
             .queue_request(request)
             .map_err(|(_, error)| camera_error(error))?;
@@ -281,13 +496,13 @@ fn camera_loop(
         "camera-square-rs: native camera ready; still stride={still_stride}, view stride={view_stride}"
     );
     let mut pending_capture: Option<(PathBuf, mpsc::Sender<io::Result<()>>)> = None;
-    let mut jpeg_worker: Option<JoinHandle<()>> = None;
+    let mut capture_worker: Option<JoinHandle<()>> = None;
     'camera: loop {
         loop {
             match commands.try_recv() {
                 Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => break 'camera,
                 Ok(Command::Capture { path, reply }) => {
-                    if pending_capture.is_some() || jpeg_worker.is_some() {
+                    if pending_capture.is_some() || capture_worker.is_some() {
                         let _ = reply.send(Err(io::Error::new(
                             io::ErrorKind::WouldBlock,
                             "capture already in progress",
@@ -299,8 +514,11 @@ fn camera_loop(
                 Err(mpsc::TryRecvError::Empty) => break,
             }
         }
-        if jpeg_worker.as_ref().is_some_and(JoinHandle::is_finished) {
-            let _ = jpeg_worker.take().expect("finished JPEG worker").join();
+        if capture_worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            let _ = capture_worker
+                .take()
+                .expect("finished capture worker")
+                .join();
         }
         let mut request = match completed.recv_timeout(Duration::from_millis(120)) {
             Ok(request) => request,
@@ -318,39 +536,124 @@ fn camera_loop(
             let mut slot = latest
                 .lock()
                 .map_err(|_| io::Error::other("native preview lock poisoned"))?;
-            copy_view_frame(&view_planes, &mut slot, view_stride)?;
+            copy_view_frame(&view_planes, &mut slot, view_stride, size.view_height)?;
         }
         signal_frame(&event);
         if let Some((path, reply)) = pending_capture.take() {
             let started = Instant::now();
-            let still: &MemoryMappedFrameBuffer<FrameBuffer> = request
-                .buffer(&still_stream)
-                .ok_or_else(|| io::Error::other("native still buffer missing"))?;
-            let frame = copy_yuv420(
-                &still.data(),
-                Yuv420Layout {
-                    width: STILL_WIDTH,
-                    height: STILL_HEIGHT,
-                    y_stride: still_stride,
-                    uv_stride: still_stride / 2,
-                },
-            )?;
+            let metadata = PhotoMetadata {
+                width: size.still_width as u32,
+                height: size.still_height as u32,
+                model: model.clone(),
+                exposure_us: request
+                    .metadata()
+                    .get::<ExposureTime>()
+                    .ok()
+                    .map(|value| value.0),
+                analogue_gain: request
+                    .metadata()
+                    .get::<AnalogueGain>()
+                    .ok()
+                    .map(|value| value.0),
+            };
+            let frame = if settings.capture_format == CaptureFormat::Dng {
+                None
+            } else {
+                let still: &MemoryMappedFrameBuffer<FrameBuffer> = request
+                    .buffer(&still_stream)
+                    .ok_or_else(|| io::Error::other("native still buffer missing"))?;
+                Some(copy_yuv420(
+                    &still.data(),
+                    Yuv420Layout {
+                        width: size.still_width,
+                        height: size.still_height,
+                        y_stride: still_stride,
+                        uv_stride: still_stride / 2,
+                    },
+                )?)
+            };
+            let gallery_frame = if settings.capture_format == CaptureFormat::Dng {
+                Some(
+                    latest
+                        .lock()
+                        .map_err(|_| io::Error::other("native preview lock poisoned"))?
+                        .clone(),
+                )
+            } else {
+                None
+            };
+            let raw = if let (Some(stream), Some((dimensions, stride, cfa))) =
+                (&raw_stream, raw_layout)
+            {
+                let buffer: &MemoryMappedFrameBuffer<FrameBuffer> = request
+                    .buffer(stream)
+                    .ok_or_else(|| io::Error::other("native raw buffer missing"))?;
+                let planes = buffer.data();
+                let bytes = planes
+                    .first()
+                    .ok_or_else(|| io::Error::other("missing raw plane"))?;
+                let required = stride * dimensions.height as usize;
+                if bytes.len() < required {
+                    return Err(io::Error::other("short raw plane"));
+                }
+                Some(RawCapture {
+                    data: bytes[..required].to_vec(),
+                    width: dimensions.width as usize,
+                    height: dimensions.height as usize,
+                    stride,
+                    cfa,
+                    model: model.clone(),
+                    black_levels: request
+                        .metadata()
+                        .get::<SensorBlackLevels>()
+                        .ok()
+                        .map(|value| value.0),
+                    colour_gains: request
+                        .metadata()
+                        .get::<ColourGains>()
+                        .ok()
+                        .map(|value| value.0),
+                    colour_matrix: request
+                        .metadata()
+                        .get::<ColourCorrectionMatrix>()
+                        .ok()
+                        .map(|value| value.0),
+                    exposure_us: metadata.exposure_us,
+                    analogue_gain: metadata.analogue_gain,
+                })
+            } else {
+                None
+            };
             eprintln!(
-                "camera-square-rs: native still copy={}ms",
+                "camera-square-rs: native frame copy={}ms",
                 started.elapsed().as_millis()
             );
-            jpeg_worker = Some(thread::spawn(move || {
-                let result = save_jpeg(path, frame, still_stride, started);
+            let capture_format = settings.capture_format;
+            capture_worker = Some(thread::spawn(move || {
+                let result = save_capture(
+                    path,
+                    CapturedFrames {
+                        still: frame,
+                        gallery: gallery_frame,
+                        raw,
+                    },
+                    capture_format,
+                    still_stride,
+                    size,
+                    metadata,
+                    started,
+                );
                 let _ = reply.send(result);
             }));
         }
         request.reuse(ReuseFlag::REUSE_BUFFERS);
+        apply_controls(&mut request, &settings)?;
         camera
             .queue_request(request)
             .map_err(|(_, error)| camera_error(error))?;
     }
     camera.stop().map_err(camera_error)?;
-    if let Some(worker) = jpeg_worker {
+    if let Some(worker) = capture_worker {
         let _ = worker.join();
     }
     Ok(())
@@ -368,9 +671,14 @@ fn signal_frame(event: &OwnedFd) {
     };
 }
 
-fn copy_view_frame(planes: &[&[u8]], output: &mut [u8], stride: usize) -> io::Result<()> {
-    let y_len = stride * VIEW_HEIGHT;
-    let uv_len = stride / 2 * VIEW_HEIGHT / 2;
+fn copy_view_frame(
+    planes: &[&[u8]],
+    output: &mut [u8],
+    stride: usize,
+    height: usize,
+) -> io::Result<()> {
+    let y_len = stride * height;
+    let uv_len = stride / 2 * height / 2;
     if output.len() != y_len + 2 * uv_len {
         return Err(io::Error::other("native preview size mismatch"));
     }
@@ -388,15 +696,126 @@ fn copy_view_frame(planes: &[&[u8]], output: &mut [u8], stride: usize) -> io::Re
     Ok(())
 }
 
-fn save_jpeg(path: PathBuf, frame: OwnedYuv420, stride: usize, started: Instant) -> io::Result<()> {
+fn save_capture(
+    path: PathBuf,
+    frames: CapturedFrames,
+    format: CaptureFormat,
+    stride: usize,
+    size: NativeSize,
+    metadata: PhotoMetadata,
+    started: Instant,
+) -> io::Result<()> {
+    let raw_path = path.with_extension("dng");
+    if format.captures_raw() {
+        save_dng(
+            &raw_path,
+            frames
+                .raw
+                .ok_or_else(|| io::Error::other("missing native raw capture"))?,
+        )?;
+        eprintln!(
+            "camera-square-rs: native DNG saved={}ms path={}",
+            started.elapsed().as_millis(),
+            raw_path.display()
+        );
+    }
+    if format == CaptureFormat::Dng {
+        let directory = path
+            .parent()
+            .ok_or_else(|| io::Error::other("capture has no directory"))?
+            .join(".gallery");
+        std::fs::create_dir_all(&directory)?;
+        let preview_path = directory.join(
+            path.file_name()
+                .ok_or_else(|| io::Error::other("capture has no filename"))?,
+        );
+        save_gallery_jpeg(
+            preview_path,
+            frames
+                .gallery
+                .ok_or_else(|| io::Error::other("missing gallery preview frame"))?,
+            size,
+            metadata,
+            started,
+        )?;
+    } else {
+        save_jpeg(
+            path,
+            frames
+                .still
+                .ok_or_else(|| io::Error::other("missing native still frame"))?,
+            stride,
+            size,
+            metadata,
+            started,
+        )?;
+    }
+    Ok(())
+}
+
+fn save_gallery_jpeg(
+    path: PathBuf,
+    frame: Vec<u8>,
+    size: NativeSize,
+    mut metadata: PhotoMetadata,
+    started: Instant,
+) -> io::Result<()> {
+    let y_len = size.view_stride * size.view_height;
+    let uv_len = y_len / 4;
+    if frame.len() != y_len + 2 * uv_len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid gallery preview frame",
+        ));
+    }
+    let mut compressor = Compressor::new().map_err(camera_error)?;
+    compressor.set_quality(85).map_err(camera_error)?;
+    let image = YuvPlanesImage {
+        y_plane: &frame[..y_len],
+        u_plane: &frame[y_len..y_len + uv_len],
+        v_plane: &frame[y_len + uv_len..],
+        width: size.view_width,
+        height: size.view_height,
+        y_stride: size.view_stride,
+        u_stride: size.view_stride / 2,
+        v_stride: size.view_stride / 2,
+        subsamp: Subsamp::Sub2x2,
+    };
+    let jpeg = compressor
+        .compress_yuv_planes_to_owned(&image)
+        .map_err(camera_error)?;
+    metadata.width = size.view_width as u32;
+    metadata.height = size.view_height as u32;
+    let jpeg = add_exif(&jpeg, &metadata)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    output.write_all(&jpeg)?;
+    eprintln!(
+        "camera-square-rs: native gallery preview saved={}ms path={}",
+        started.elapsed().as_millis(),
+        path.display()
+    );
+    Ok(())
+}
+
+fn save_jpeg(
+    path: PathBuf,
+    frame: OwnedYuv420,
+    stride: usize,
+    size: NativeSize,
+    metadata: PhotoMetadata,
+    started: Instant,
+) -> io::Result<()> {
     let mut compressor = Compressor::new().map_err(camera_error)?;
     compressor.set_quality(95).map_err(camera_error)?;
     let image = YuvPlanesImage {
         y_plane: frame.y.as_slice(),
         u_plane: frame.u.as_slice(),
         v_plane: frame.v.as_slice(),
-        width: STILL_WIDTH,
-        height: STILL_HEIGHT,
+        width: size.still_width,
+        height: size.still_height,
         y_stride: stride,
         u_stride: stride / 2,
         v_stride: stride / 2,
@@ -405,6 +824,7 @@ fn save_jpeg(path: PathBuf, frame: OwnedYuv420, stride: usize, started: Instant)
     let jpeg = compressor
         .compress_yuv_planes_to_owned(&image)
         .map_err(camera_error)?;
+    let jpeg = add_exif(&jpeg, &metadata)?;
     let encoded_ms = started.elapsed().as_millis();
     let mut output = OpenOptions::new()
         .write(true)

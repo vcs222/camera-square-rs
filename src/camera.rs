@@ -1,4 +1,4 @@
-//! Camera access with a persistent native path for default JPEG and rpicam for other settings.
+//! Camera access with a persistent native session and rpicam compatibility path.
 
 use crate::settings::{
     ASPECT_RATIOS, CameraSettings, DENOISE, HDR, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
@@ -167,8 +167,13 @@ impl Preview {
         let chroma_stride = luma_stride / 2;
         let frame_size = luma_stride * height * 3 / 2;
         #[cfg(all(target_os = "linux", feature = "native-camera"))]
-        if *settings == CameraSettings::default() && (width, height) == (720, 540) {
-            match crate::native_camera::NativePreview::start(frame_size) {
+        if screen_width == 720 {
+            match crate::native_camera::NativePreview::start(
+                settings.clone(),
+                width,
+                height,
+                luma_stride,
+            ) {
                 Ok(native) => {
                     return Ok(Self {
                         child: None,
@@ -286,7 +291,7 @@ impl Drop for Preview {
 }
 
 /// Capture to a .jpg path and, when requested, its sibling .dng path.
-/// DNG-only capture removes rpicam's accompanying JPEG after verifying both outputs.
+/// DNG-only capture keeps rpicam's accompanying JPEG in the gallery preview directory.
 pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) -> io::Result<()> {
     validate(settings)?;
     let output_path = output_path.as_ref();
@@ -377,7 +382,19 @@ pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) ->
         ));
     }
     if settings.capture_format == crate::settings::CaptureFormat::Dng {
-        fs::remove_file(output_path)?;
+        let gallery_directory = output_path
+            .parent()
+            .ok_or_else(|| io::Error::other("capture has no directory"))?
+            .join(".gallery");
+        fs::create_dir_all(&gallery_directory)?;
+        fs::rename(
+            output_path,
+            gallery_directory.join(
+                output_path
+                    .file_name()
+                    .ok_or_else(|| io::Error::other("capture has no filename"))?,
+            ),
+        )?;
     }
     Ok(())
 }

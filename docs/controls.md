@@ -13,7 +13,7 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 | Sharpness (**SH**) | 0.0 to 2.0 in 0.5 steps; default 1.0. |
 | Exposure compensation (**EV**) | −10.0 to +10.0 in one-third-stop steps. The current value is centered; tap a visible value to select it, or tap an outer value again to continue through the range. |
 | Aspect ratio | 1:1, 4:3, 3:2, 16:9, or 65:24; default 4:3. Changes both preview framing and still output size. |
-| Capture format | JPEG, DNG, or JPEG+DNG. The gallery shows JPEGs only. |
+| Capture format | JPEG, DNG, or JPEG+DNG. DNG-only photos have a JPEG gallery preview stored separately from the raw file. |
 
 ## Image adjustments
 
@@ -37,7 +37,7 @@ These are convenient picker steps, not the full range accepted by `rpicam`. A sa
 
 ## Gallery, screenshots, and shutter
 
-The gallery button opens the newest saved JPEG. Swipe left for older photos and right for newer ones; tap the back arrow to return to the camera. Photos are fitted to the screen without changing their aspect ratio.
+The gallery button opens the newest photo preview. A bottom bar shows its format (`JPG`, `DNG`, or `JPG+DNG`), capture name, and position in the gallery. Swipe left for older photos and right for newer ones; tap the back arrow to return to the camera. Photos are fitted to the screen without changing their aspect ratio.
 
 The screenshot button saves the current display, including overlays, as a JPEG. The translucent shutter button captures a photo in the selected format. Drag it to reposition it below the top controls; dragging does not take a photo.
 
@@ -45,7 +45,7 @@ The screenshot button saves the current display, including overlays, as a JPEG. 
 
 Tap a control to open its picker. Tap a value to apply it immediately; the picker stays open so another value can be chosen. The same control leaves its picker open, while another setting control switches to its picker. It closes five seconds after the last setting-control tap or value selection, or when the shutter is pressed.
 
-Changing most camera settings restarts the preview, so it briefly pauses. The picker remains open, and the selected settings are also used for still captures. Returning to the default 4:3 JPEG settings switches back to the native preview when that backend is built in. Settings return to their defaults when the app restarts.
+Changing most camera settings restarts the preview, so it briefly pauses. The picker remains open, and the selected settings are also used for still captures. With the native build, unavailable native controls or unsupported stream configurations switch to the `rpicam` path. Settings return to their defaults when the app restarts.
 
 ## Aspect-ratio dimensions
 
