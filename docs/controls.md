@@ -27,7 +27,7 @@ The top-row **C**, **B**, and **SAT** controls adjust contrast, brightness, and 
 
 These are convenient picker steps, not the full range accepted by `rpicam`. A saturation of 0.0 produces grayscale.
 
-**DN** selects denoise: Auto, Off, colour-denoise off, Fast, or High quality. Off disables spatial and colour denoise; colour-denoise off disables only colour denoise. High-quality colour denoise can reduce preview throughput. **HDR** selects Off, Auto, or Single exposure; available modes depend on the camera and Raspberry Pi model.
+**DN** selects denoise: Auto, Off, colour-denoise off, Fast, or High quality. Off disables spatial and colour denoise; colour-denoise off disables only colour denoise. High-quality colour denoise can reduce preview throughput. HDR is not offered in this app; see [camera support](camera-support.md) for the hardware reason.
 
 ## Composition and focus
 

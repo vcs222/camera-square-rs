@@ -2,7 +2,7 @@
 
 The production app uses a persistent libcamera session for JPEG, DNG, and paired capture when built with `native-camera`. It configures a YUV420 viewfinder and still stream at the selected aspect ratio. DNG modes add an unpacked 12-bit Bayer stream. JPEGs are encoded with TurboJPEG and DNGs are written as TIFF-based raw files on a worker thread while preview continues. No environment flag is needed.
 
-Shutter, gain, white balance, metering, EV, sharpness, contrast, brightness, saturation, denoise, and single-exposure HDR are applied to native requests when the camera supports those controls. The tested IMX477 HQ Camera does not support HDR despite advertising the control, so HDR settings use the `rpicam` path on that sensor. Sensor HDR auto mode on the IMX708, unavailable controls, and rejected native stream configurations also use `rpicam`. Native JPEGs include EXIF capture time, model, dimensions, exposure, and nominal ISO. Native DNGs include Bayer layout, black and white levels, colour matrix, white balance, and capture metadata.
+Shutter, gain, white balance, metering, EV, sharpness, contrast, brightness, saturation, and denoise are applied to native requests when the camera supports those controls. Unavailable controls and rejected native stream configurations use the `rpicam` path. HDR is not exposed because the tested Pi Zero 2 W with HQ Camera did not produce an HDR effect; see [camera support](camera-support.md#why-hdr-is-absent). Native JPEGs include EXIF capture time, model, dimensions, exposure, and nominal ISO. Native DNGs include Bayer layout, black and white levels, colour matrix, white balance, and capture metadata.
 
 ## Build for the tested Pi Zero 2 W from macOS
 

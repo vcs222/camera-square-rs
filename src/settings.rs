@@ -15,7 +15,6 @@ pub enum Picker {
     Brightness,
     Saturation,
     Denoise,
-    Hdr,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -221,21 +220,6 @@ pub const DENOISE: [Choice<&str>; 5] = [
     },
 ];
 
-pub const HDR: [Choice<&str>; 3] = [
-    Choice {
-        label: "OFF",
-        value: "off",
-    },
-    Choice {
-        label: "AUTO",
-        value: "auto",
-    },
-    Choice {
-        label: "S-EXP",
-        value: "single-exp",
-    },
-];
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct CameraSettings {
     pub shutter: usize,
@@ -251,7 +235,6 @@ pub struct CameraSettings {
     pub brightness: usize,
     pub saturation: usize,
     pub denoise: usize,
-    pub hdr: usize,
 }
 
 impl Default for CameraSettings {
@@ -269,7 +252,6 @@ impl Default for CameraSettings {
             brightness: 2,
             saturation: 2,
             denoise: 0,
-            hdr: 0,
         }
     }
 }

@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::draw::{Canvas, rgb};
 use crate::settings::{
-    ASPECT_RATIOS, CameraSettings, CaptureFormat, DENOISE, HDR, ISOS, METERING, Picker, SHUTTERS,
+    ASPECT_RATIOS, CameraSettings, CaptureFormat, DENOISE, ISOS, METERING, Picker, SHUTTERS,
     ev_picker_label,
 };
 use crate::state::{CompositionGrid, UiState};
@@ -18,7 +18,8 @@ const BRIGHTNESS_LABELS: [&str; 5] = ["-1.0", "-0.5", "0.0", "+0.5", "+1.0"];
 const WB_PICKER: [&str; 6] = ["AUTO", "DAY", "CLOUDY", "INDOOR", "FLUOR", "TUNG"];
 const WB_READOUT: [&str; 6] = ["AUTO", "DAY", "CLDY", "INDR", "FLOR", "TUNG"];
 const METERING_READOUT: [&str; 3] = ["CTR", "SPOT", "AVG"];
-const TOP_WIDTHS: [i32; 9] = [42, 38, 52, 64, 76, 112, 100, 108, 48];
+pub const TOP_WIDTHS: [i32; 8] = [42, 38, 52, 64, 76, 112, 108, 48];
+pub const TOP_GAP: i32 = 20;
 // Start below the centered controls' 64px hit area.
 const TOP_PICKER_LIST_TOP: i32 = 72;
 
@@ -135,7 +136,6 @@ pub fn picker_labels(_settings: &CameraSettings, picker: Picker) -> Vec<String> 
             .map(|v| v.label().to_string())
             .collect(),
         Picker::Denoise => DENOISE.iter().map(|v| v.label.to_string()).collect(),
-        Picker::Hdr => HDR.iter().map(|v| v.label.to_string()).collect(),
     }
 }
 
@@ -157,7 +157,6 @@ pub fn picker_selected(settings: &CameraSettings, picker: Picker) -> usize {
             .position(|&v| v == settings.capture_format)
             .unwrap_or(0),
         Picker::Denoise => settings.denoise,
-        Picker::Hdr => settings.hdr,
     }
 }
 
@@ -173,7 +172,7 @@ pub fn picker_scale(width: usize, settings: &CameraSettings, picker: Picker) -> 
 pub const fn picker_is_top_row(picker: Picker) -> bool {
     matches!(
         picker,
-        Picker::Contrast | Picker::Brightness | Picker::Saturation | Picker::Denoise | Picker::Hdr
+        Picker::Contrast | Picker::Brightness | Picker::Saturation | Picker::Denoise
     )
 }
 
@@ -315,8 +314,8 @@ fn screenshot_icon(canvas: &mut Canvas<'_>, x: i32) {
 }
 
 pub fn top_item_x(width: usize, item: usize) -> i32 {
-    let total: i32 = TOP_WIDTHS.iter().sum::<i32>() + 8 * (TOP_WIDTHS.len() as i32 - 1);
-    (width as i32 - total) / 2 + TOP_WIDTHS.iter().take(item).sum::<i32>() + 8 * item as i32
+    let total: i32 = TOP_WIDTHS.iter().sum::<i32>() + TOP_GAP * (TOP_WIDTHS.len() as i32 - 1);
+    (width as i32 - total) / 2 + TOP_WIDTHS.iter().take(item).sum::<i32>() + TOP_GAP * item as i32
 }
 
 fn overlay_text(
@@ -440,8 +439,7 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
         (3, "B", BRIGHTNESS_LABELS[camera.brightness], 16),
         (4, "SAT", VALUE_LABELS[camera.saturation], 40),
         (5, "DN", DENOISE[camera.denoise].label, 28),
-        (6, "HDR", HDR[camera.hdr].label, 40),
-        (7, "GRID", state.composition_grid.label(), 52),
+        (6, "GRID", state.composition_grid.label(), 52),
     ] {
         let x = top_item_x(canvas.width, item);
         overlay_text(canvas, fullscreen, x, 28, label, 2, PAPER);
@@ -450,7 +448,7 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     overlay_text(
         canvas,
         fullscreen,
-        top_item_x(canvas.width, 8),
+        top_item_x(canvas.width, 7),
         28,
         "PEAK",
         2,
