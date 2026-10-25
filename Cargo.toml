@@ -21,17 +21,6 @@ turbojpeg = { version = "1.5.1", optional = true }
 
 [features]
 native-camera = ["dep:libcamera", "dep:turbojpeg"]
-native-camera-probe = ["native-camera"]
-
-[[bin]]
-name = "native-camera-probe"
-path = "src/bin/native_camera_probe.rs"
-required-features = ["native-camera-probe"]
-
-[[bin]]
-name = "native-ui-smoke"
-path = "src/bin/native_ui_smoke.rs"
-required-features = ["native-camera"]
 
 [profile.release]
 opt-level = 2

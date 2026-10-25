@@ -8,7 +8,7 @@ Bug reports, hardware compatibility notes, and focused pull requests are welcome
 - Run `cargo fmt --all -- --check`.
 - Run `cargo clippy --all-targets -- -D warnings`.
 - Run `cargo check --all-targets`.
-- For native camera changes, also build on Linux with `cargo check --all-targets --features native-camera-probe` and the `libcamera-dev`, `libclang-dev`, `pkg-config`, and `cmake` packages installed.
+- For native camera changes, also build on Linux with `cargo check --all-targets --features native-camera` and the `libcamera-dev`, `libclang-dev`, `pkg-config`, and `cmake` packages installed.
 - For camera, framebuffer, or touch changes, include the Raspberry Pi model, camera, display, and OS used for hardware validation. Host builds cannot verify device behavior.
 
 Do not include personal photographs, DNG captures, or other private capture data in commits or issues.

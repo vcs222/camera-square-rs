@@ -45,7 +45,7 @@ The screenshot button saves the current display, including overlays, as a JPEG. 
 
 Tap a control to open its picker. Tap a value to apply it immediately; the picker stays open so another value can be chosen. The same control leaves its picker open, while another setting control switches to its picker. It closes five seconds after the last setting-control tap or value selection, or when the shutter is pressed.
 
-Changing most camera settings restarts `rpicam-vid`, so the preview briefly pauses. The picker remains open, and the selected settings are also used for still captures. Settings return to their defaults when the app restarts.
+Changing most camera settings restarts the preview, so it briefly pauses. The picker remains open, and the selected settings are also used for still captures. Returning to the default 4:3 JPEG settings switches back to the native preview when that backend is built in. Settings return to their defaults when the app restarts.
 
 ## Aspect-ratio dimensions
 

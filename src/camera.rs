@@ -1,4 +1,4 @@
-//! Process-backed camera access. The UI owns one preview and stops it before capture.
+//! Camera access with a persistent native path for default JPEG and rpicam for other settings.
 
 use crate::settings::{
     ASPECT_RATIOS, CameraSettings, DENOISE, HDR, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
@@ -167,10 +167,7 @@ impl Preview {
         let chroma_stride = luma_stride / 2;
         let frame_size = luma_stride * height * 3 / 2;
         #[cfg(all(target_os = "linux", feature = "native-camera"))]
-        if std::env::var_os("CAMERA_SQUARE_NATIVE").is_some()
-            && *settings == CameraSettings::default()
-            && (width, height) == (720, 540)
-        {
+        if *settings == CameraSettings::default() && (width, height) == (720, 540) {
             match crate::native_camera::NativePreview::start(frame_size) {
                 Ok(native) => {
                     return Ok(Self {

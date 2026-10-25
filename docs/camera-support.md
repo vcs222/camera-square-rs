@@ -1,6 +1,6 @@
 # Camera support
 
-Camera Square is designed for the Raspberry Pi camera stack. It uses `rpicam-vid` for preview and `rpicam-still` for capture. A control appearing in the UI does not guarantee that every sensor or Raspberry Pi model supports it.
+Camera Square is designed for the Raspberry Pi camera stack. With the `native-camera` build feature, it uses a persistent libcamera session for default 4:3 JPEG preview and capture. Adjusted camera settings, other aspect ratios, and DNG output use `rpicam-vid` for preview and `rpicam-still` for capture. A control appearing in the UI does not guarantee that every sensor or Raspberry Pi model supports it.
 
 ## Controls exposed by the app
 

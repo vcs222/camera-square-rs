@@ -51,8 +51,8 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
       - run: cargo check --all-targets
 
-  native-probe:
-    name: Native camera probe (Linux ARM64)
+  native-camera:
+    name: Native camera (Linux ARM64)
     runs-on: ubuntu-26.04-arm
     env:
       TURBOJPEG_SOURCE: vendor
@@ -63,6 +63,6 @@ jobs:
         with:
           components: clippy
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcamera-dev libclang-dev pkg-config cmake
-      - run: cargo check --all-targets --features native-camera-probe
-      - run: cargo clippy --all-targets --features native-camera-probe -- -D warnings
-      - run: cargo test --all-targets --features native-camera-probe
+      - run: cargo check --all-targets --features native-camera
+      - run: cargo clippy --all-targets --features native-camera -- -D warnings
+      - run: cargo test --all-targets --features native-camera
