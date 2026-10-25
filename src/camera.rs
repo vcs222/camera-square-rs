@@ -7,8 +7,10 @@ use std::fs;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -121,6 +123,8 @@ fn stop_child(child: &mut Child) -> io::Result<()> {
 pub struct Preview {
     child: Option<Child>,
     output: Option<ChildStdout>,
+    #[cfg(all(target_os = "linux", feature = "native-camera"))]
+    native: Option<crate::native_camera::NativePreview>,
     pub width: usize,
     pub height: usize,
     pub luma_stride: usize,
@@ -140,6 +144,8 @@ impl Preview {
         Self {
             child: None,
             output: None,
+            #[cfg(all(target_os = "linux", feature = "native-camera"))]
+            native: None,
             width,
             height,
             luma_stride,
@@ -160,6 +166,29 @@ impl Preview {
         let luma_stride = (width + 63) & !63;
         let chroma_stride = luma_stride / 2;
         let frame_size = luma_stride * height * 3 / 2;
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if std::env::var_os("CAMERA_SQUARE_NATIVE").is_some()
+            && *settings == CameraSettings::default()
+            && (width, height) == (720, 540)
+        {
+            match crate::native_camera::NativePreview::start(frame_size) {
+                Ok(native) => {
+                    return Ok(Self {
+                        child: None,
+                        output: None,
+                        native: Some(native),
+                        width,
+                        height,
+                        luma_stride,
+                        chroma_stride,
+                        frame_size,
+                    });
+                }
+                Err(error) => {
+                    eprintln!("camera-square-rs: native startup failed, using rpicam: {error}")
+                }
+            }
+        }
         let mut command = Command::new("/usr/bin/rpicam-vid");
         command
             .args(["--timeout", "0", "--nopreview", "--codec", "yuv420"])
@@ -179,6 +208,8 @@ impl Preview {
         Ok(Self {
             child: Some(child),
             output,
+            #[cfg(all(target_os = "linux", feature = "native-camera"))]
+            native: None,
             width,
             height,
             luma_stride,
@@ -189,7 +220,34 @@ impl Preview {
 
     /// The stdout descriptor can be polled together with the touch input descriptor.
     pub fn fd(&self) -> RawFd {
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(native) = &self.native {
+            return native.fd();
+        }
         self.output.as_ref().map_or(-1, AsRawFd::as_raw_fd)
+    }
+
+    pub fn is_native(&self) -> bool {
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        {
+            self.native.is_some()
+        }
+        #[cfg(not(all(target_os = "linux", feature = "native-camera")))]
+        {
+            false
+        }
+    }
+
+    pub fn capture_native(&self, path: PathBuf) -> io::Result<mpsc::Receiver<io::Result<()>>> {
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(native) = &self.native {
+            return native.capture(path);
+        }
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native camera is inactive",
+        ))
     }
 
     /// Read one complete, stride-padded YUV420 frame after stdout becomes readable.
@@ -200,6 +258,10 @@ impl Preview {
                 "incorrect preview buffer size",
             ));
         }
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(native) = &self.native {
+            return native.read_frame(frame);
+        }
         self.output
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "preview stopped"))?
@@ -207,6 +269,10 @@ impl Preview {
     }
 
     pub fn stop(&mut self) -> io::Result<()> {
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(mut native) = self.native.take() {
+            return native.stop();
+        }
         // Close stdout first so the camera process can release its pipe resources.
         self.output.take();
         match self.child.take() {

@@ -1,0 +1,14 @@
+FROM debian:trixie
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends build-essential clang libclang-dev pkg-config curl ca-certificates libssl3t64 && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL -o /tmp/libcamera0.6.deb 'https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera0.6_0.6.0+rpt20251202-1_arm64.deb' && \
+    curl -fsSL -o /tmp/libcamera-dev.deb 'https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-dev_0.6.0+rpt20251202-1_arm64.deb' && \
+    curl -fsSL -o /tmp/libcamera-ipa.deb 'https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-ipa_0.6.0+rpt20251202-1_arm64.deb' && \
+    curl -fsSL -o /tmp/libpisp1.deb 'https://archive.raspberrypi.com/debian/pool/main/libp/libpisp/libpisp1_1.3.0-1_arm64.deb' && \
+    curl -fsSL -o /tmp/libpisp-common.deb 'https://archive.raspberrypi.com/debian/pool/main/libp/libpisp/libpisp-common_1.3.0-1_all.deb' && \
+    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /tmp/*.deb && \
+    rm /tmp/*.deb && rm -rf /var/lib/apt/lists/*
+RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sources.list.d/backports.list && \
+    apt-get update -qq && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends -t trixie-backports cargo rustc cmake && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace

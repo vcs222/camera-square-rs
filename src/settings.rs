@@ -236,7 +236,7 @@ pub const HDR: [Choice<&str>; 3] = [
     },
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CameraSettings {
     pub shutter: usize,
     pub iso: usize,

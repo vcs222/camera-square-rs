@@ -6,9 +6,14 @@ mod display;
 mod draw;
 mod gallery;
 mod input;
+#[cfg(all(target_os = "linux", feature = "native-camera"))]
+mod native_camera;
 mod render;
 mod settings;
 mod state;
+
+#[cfg(any(test, all(target_os = "linux", feature = "native-camera")))]
+mod native_yuv;
 
 fn main() {
     if let Err(error) = app::run() {

@@ -5,6 +5,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -314,8 +315,9 @@ fn take_photo(
     display: &mut Display,
     frame_ready: &mut bool,
     capture_job: &mut Option<JoinHandle<CaptureOutcome>>,
+    native_capture_job: &mut Option<NativeCaptureJob>,
 ) {
-    if capture_job.is_some() {
+    if capture_job.is_some() || native_capture_job.is_some() {
         return;
     }
     let started = Instant::now();
@@ -337,6 +339,19 @@ fn take_photo(
         );
     }
     let _ = display.present();
+    if preview.is_native() {
+        match capture_path().and_then(|path| preview.capture_native(path)) {
+            Ok(reply) => {
+                state.show_message("CAPTURING", 2.0);
+                *native_capture_job = Some(NativeCaptureJob { reply, started });
+            }
+            Err(error) => {
+                eprintln!("camera-square-rs: native capture request: {error}");
+                state.show_message("CAPTURE FAILED", 2.0);
+            }
+        }
+        return;
+    }
     let owned_preview = std::mem::replace(
         preview,
         Preview::inactive(
@@ -378,6 +393,11 @@ struct CaptureOutcome {
     next_preview: io::Result<Preview>,
     save_result: io::Result<()>,
     stop_error: Option<io::Error>,
+    started: Instant,
+}
+
+struct NativeCaptureJob {
+    reply: Receiver<io::Result<()>>,
     started: Instant,
 }
 
@@ -535,6 +555,7 @@ struct TouchContext<'a> {
     frame_ready: &'a mut bool,
     background: &'a mut Vec<u16>,
     capture_job: &'a mut Option<JoinHandle<CaptureOutcome>>,
+    native_capture_job: &'a mut Option<NativeCaptureJob>,
 }
 
 fn apply_touch_frame(
@@ -554,6 +575,7 @@ fn apply_touch_frame(
         frame_ready,
         background,
         capture_job,
+        native_capture_job,
     } = context;
     let now = Instant::now();
     if frame.count > 0 && *previous_count == 0 {
@@ -682,9 +704,14 @@ fn apply_touch_frame(
                             1.2,
                         );
                     }
-                    Hit::Shutter if !current.dragged => {
-                        take_photo(state, preview, display, frame_ready, capture_job)
-                    }
+                    Hit::Shutter if !current.dragged => take_photo(
+                        state,
+                        preview,
+                        display,
+                        frame_ready,
+                        capture_job,
+                        native_capture_job,
+                    ),
                     Hit::PickerChoice(index) if state.picker_is_open(now) => {
                         match apply_picker(state, index) {
                             Ok(true) => {
@@ -696,7 +723,10 @@ fn apply_touch_frame(
                                         1.2,
                                     );
                                 }
-                                if restart_needed(state.picker) {
+                                if restart_needed(state.picker)
+                                    || (state.picker == Picker::CaptureFormat
+                                        && std::env::var_os("CAMERA_SQUARE_NATIVE").is_some())
+                                {
                                     restart_preview(
                                         state,
                                         preview,
@@ -801,12 +831,13 @@ pub fn run() -> io::Result<()> {
     let mut gesture = None;
     let mut max_contacts = 0;
     let mut capture_job: Option<JoinHandle<CaptureOutcome>> = None;
+    let mut native_capture_job: Option<NativeCaptureJob> = None;
     let mut first_preview_after_capture: Option<Instant> = None;
     while RUNNING.load(Ordering::Relaxed) {
         let fds = poll_descriptors(touch.fd(), preview.fd())?;
         if fds[0].revents & libc::POLLIN != 0 {
             for touch_frame in touch.read_frames()? {
-                if capture_job.is_some() {
+                if capture_job.is_some() || native_capture_job.is_some() {
                     previous_count = touch_frame.count;
                     gesture = None;
                     continue;
@@ -826,6 +857,7 @@ pub fn run() -> io::Result<()> {
                         frame_ready: &mut frame_ready,
                         background: &mut background,
                         capture_job: &mut capture_job,
+                        native_capture_job: &mut native_capture_job,
                     },
                 );
             }
@@ -899,7 +931,40 @@ pub fn run() -> io::Result<()> {
                 }
             }
         }
-        if capture_job.is_none() && preview.fd() < 0 && Instant::now() >= preview_retry_at {
+        let native_result =
+            native_capture_job
+                .as_ref()
+                .and_then(|job| match job.reply.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(mpsc::TryRecvError::Empty) => None,
+                    Err(mpsc::TryRecvError::Disconnected) => Some(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "native JPEG worker disconnected",
+                    ))),
+                });
+        if let Some(result) = native_result {
+            let job = native_capture_job.take().expect("completed native capture");
+            eprintln!(
+                "camera-square-rs: native capture total={}ms",
+                job.started.elapsed().as_millis()
+            );
+            state.show_message(
+                if result.is_ok() {
+                    "SAVED"
+                } else {
+                    "CAPTURE FAILED"
+                },
+                2.0,
+            );
+            if let Err(error) = result {
+                eprintln!("camera-square-rs: native capture failed: {error}");
+            }
+        }
+        if capture_job.is_none()
+            && native_capture_job.is_none()
+            && preview.fd() < 0
+            && Instant::now() >= preview_retry_at
+        {
             restart_preview(
                 &mut state,
                 &mut preview,
