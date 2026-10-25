@@ -725,7 +725,10 @@ fn apply_touch_frame(
                                 }
                                 if restart_needed(state.picker)
                                     || (state.picker == Picker::CaptureFormat
-                                        && std::env::var_os("CAMERA_SQUARE_NATIVE").is_some())
+                                        && cfg!(all(
+                                            target_os = "linux",
+                                            feature = "native-camera"
+                                        )))
                                 {
                                     restart_preview(
                                         state,

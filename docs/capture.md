@@ -4,11 +4,11 @@
 
 Still photos use the selected camera settings and aspect ratio. JPEG is the default format; DNG captures use the camera stack's raw Bayer output. Selecting DNG removes the accompanying temporary JPEG after a successful capture. JPEG+DNG keeps both files with the same base name. The gallery displays JPEGs only.
 
-The app pauses the preview while `rpicam-still` owns the camera, then starts the preview again. Capture runs on a worker thread; touch input is ignored until it finishes. The service log reports preview-stop, still-process, preview-restart, total-capture, and first-preview-after-capture timings.
+With the native camera build, default 4:3 JPEG capture uses a persistent libcamera session and saves the image with TurboJPEG while preview continues. Native JPEGs currently omit EXIF metadata. For adjusted settings, other aspect ratios, and DNG, the app pauses the preview while `rpicam-still` owns the camera, then starts the preview again. Capture runs on a worker thread; touch input is ignored until it finishes. The process path logs preview-stop, still-process, preview-restart, total-capture, and first-preview-after-capture timings.
 
 ## Capture tuning
 
-The still camera waits 350 ms by default before capture. Set `CAMERA_SQUARE_STILL_TIMEOUT_MS` to a value from 0 to 5000 to change that delay. An invalid value falls back to 350 ms. A longer delay can help when automatic exposure or white balance needs more time to settle.
+On the `rpicam-still` path, the camera waits 350 ms by default before capture. Set `CAMERA_SQUARE_STILL_TIMEOUT_MS` to a value from 0 to 5000 to change that delay. An invalid value falls back to 350 ms. A longer delay can help when automatic exposure or white balance needs more time to settle.
 
 Zero-shutter-lag capture is disabled by default. Set `CAMERA_SQUARE_ENABLE_ZSL=1` to request it; the app first checks whether the installed `rpicam-still` supports `--zsl`.
 
