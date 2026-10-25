@@ -42,6 +42,12 @@ struct NativeSize {
     view_stride: usize,
 }
 
+struct CapturedFrames {
+    still: Option<OwnedYuv420>,
+    gallery: Option<Vec<u8>>,
+    raw: Option<RawCapture>,
+}
+
 enum Command {
     Capture {
         path: PathBuf,
@@ -626,9 +632,11 @@ fn camera_loop(
             capture_worker = Some(thread::spawn(move || {
                 let result = save_capture(
                     path,
-                    frame,
-                    gallery_frame,
-                    raw,
+                    CapturedFrames {
+                        still: frame,
+                        gallery: gallery_frame,
+                        raw,
+                    },
                     capture_format,
                     still_stride,
                     size,
@@ -690,9 +698,7 @@ fn copy_view_frame(
 
 fn save_capture(
     path: PathBuf,
-    frame: Option<OwnedYuv420>,
-    gallery_frame: Option<Vec<u8>>,
-    raw: Option<RawCapture>,
+    frames: CapturedFrames,
     format: CaptureFormat,
     stride: usize,
     size: NativeSize,
@@ -703,7 +709,9 @@ fn save_capture(
     if format.captures_raw() {
         save_dng(
             &raw_path,
-            raw.ok_or_else(|| io::Error::other("missing native raw capture"))?,
+            frames
+                .raw
+                .ok_or_else(|| io::Error::other("missing native raw capture"))?,
         )?;
         eprintln!(
             "camera-square-rs: native DNG saved={}ms path={}",
@@ -723,7 +731,9 @@ fn save_capture(
         );
         save_gallery_jpeg(
             preview_path,
-            gallery_frame.ok_or_else(|| io::Error::other("missing gallery preview frame"))?,
+            frames
+                .gallery
+                .ok_or_else(|| io::Error::other("missing gallery preview frame"))?,
             size,
             metadata,
             started,
@@ -731,7 +741,9 @@ fn save_capture(
     } else {
         save_jpeg(
             path,
-            frame.ok_or_else(|| io::Error::other("missing native still frame"))?,
+            frames
+                .still
+                .ok_or_else(|| io::Error::other("missing native still frame"))?,
             stride,
             size,
             metadata,

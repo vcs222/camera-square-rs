@@ -66,7 +66,7 @@ fn colour_matrix(raw: &RawCapture) -> io::Result<[SRational; 9]> {
     let rgb_to_xyz = [
         [0.4124564, 0.3575761, 0.1804375],
         [0.2126729, 0.7151522, 0.0721750],
-        [0.0193339, 0.1191920, 0.9503041],
+        [0.0193339, 0.119_192, 0.9503041],
     ];
     let white_balance = [[gains[0], 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, gains[1]]];
     let matrix = invert(multiply(multiply(rgb_to_xyz, ccm), white_balance))?;
