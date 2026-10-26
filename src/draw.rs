@@ -240,6 +240,43 @@ impl Canvas<'_> {
             cursor = cursor.saturating_add(6 * i64::from(scale));
         }
     }
+
+    /// Draw bitmap lettering as if printed on a wheel rotating around its centre.
+    pub fn text_rotated(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        text: &str,
+        scale: i32,
+        degrees: f64,
+        color: u16,
+    ) {
+        let radians = degrees.to_radians();
+        let (sin, cos) = radians.sin_cos();
+        let width = text.chars().count() as i32 * 6 * scale;
+        let height = 7 * scale;
+        for (index, character) in text.chars().enumerate() {
+            let glyph = glyph(character);
+            for row in 0..7 {
+                for col in 0..5 {
+                    if glyph[row * 6 + col] != b'1' {
+                        continue;
+                    }
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let dx = (index as i32 * 6 + col as i32) * scale + sx - width / 2;
+                            let dy = row as i32 * scale + sy - height / 2;
+                            self.pixel(
+                                cx + (f64::from(dx) * cos - f64::from(dy) * sin).round() as i32,
+                                cy + (f64::from(dx) * sin + f64::from(dy) * cos).round() as i32,
+                                color,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn glyph(character: char) -> &'static [u8; 41] {

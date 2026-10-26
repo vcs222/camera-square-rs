@@ -61,6 +61,7 @@ pub struct UiState {
     pub camera: CameraSettings,
     pub picker: Picker,
     pub picker_deadline: Option<Instant>,
+    pub shutter_dial_offset_degrees: f64,
     pub composition_grid: CompositionGrid,
     pub focus_peaking: bool,
     pub shutter_x: i32,
@@ -81,6 +82,7 @@ impl UiState {
             camera: CameraSettings::default(),
             picker: Picker::None,
             picker_deadline: None,
+            shutter_dial_offset_degrees: 0.0,
             composition_grid: CompositionGrid::Nine,
             focus_peaking: false,
             shutter_x: screen_width as i32 - 60,
@@ -109,12 +111,14 @@ impl UiState {
     pub fn close_picker(&mut self) {
         self.picker = Picker::None;
         self.picker_deadline = None;
+        self.shutter_dial_offset_degrees = 0.0;
     }
 
     pub fn open_picker(&mut self, picker: Picker) {
         let now = Instant::now();
         if self.picker != picker || !self.picker_is_open(now) {
             self.picker = picker;
+            self.shutter_dial_offset_degrees = 0.0;
         }
         self.picker_deadline = now.checked_add(std::time::Duration::from_secs(5));
     }

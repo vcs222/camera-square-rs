@@ -16,7 +16,8 @@ use libcamera::{
     controls::{
         AeMeteringMode, AnalogueGain, AnalogueGainMode, AwbMode, Brightness,
         ColourCorrectionMatrix, ColourGains, Contrast, ControlId, ExposureTime, ExposureTimeMode,
-        ExposureValue, NoiseReductionMode, Saturation, SensorBlackLevels, Sharpness,
+        ExposureValue, FrameDurationLimits, NoiseReductionMode, Saturation, SensorBlackLevels,
+        Sharpness,
     },
     formats,
     framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
@@ -233,8 +234,17 @@ fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Resul
     controls.set(exposure_mode).map_err(camera_error)?;
     controls.set(gain_mode).map_err(camera_error)?;
     if settings.shutter != 0 {
+        let exposure = SHUTTERS[settings.shutter].value;
         controls
-            .set(ExposureTime(SHUTTERS[settings.shutter].value))
+            .set(FrameDurationLimits([
+                0,
+                exposure.saturating_add(10_000).max(83_333) as i64,
+            ]))
+            .map_err(camera_error)?;
+        controls.set(ExposureTime(exposure)).map_err(camera_error)?;
+    } else {
+        controls
+            .set(FrameDurationLimits([0, 0]))
             .map_err(camera_error)?;
     }
     if settings.iso != 0 {
@@ -282,6 +292,14 @@ fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Resul
         controls.set(mode).map_err(camera_error)?;
     }
     Ok(())
+}
+
+fn exposure_matches(shutter: usize, actual_us: Option<i32>) -> bool {
+    if shutter == 0 {
+        return true;
+    }
+    let expected = SHUTTERS[shutter].value;
+    actual_us.is_some_and(|actual| (actual - expected).abs() <= (expected / 10).max(25))
 }
 
 fn camera_loop(
@@ -454,7 +472,7 @@ fn camera_loop(
     let mut requests = Vec::new();
     for (still, view) in still_buffers.into_iter().zip(view_buffers) {
         let mut request = camera
-            .create_request(None)
+            .create_request(Some((requests.len() + 1) as u64))
             .ok_or_else(|| io::Error::other("cannot create native request"))?;
         request
             .add_buffer(
@@ -483,6 +501,7 @@ fn camera_loop(
     }
     let completed = camera.subscribe_request_completed();
     camera.start(None).map_err(camera_error)?;
+    let mut applied_shutters = vec![settings.shutter; requests.len()];
     for mut request in requests {
         apply_controls(&mut request, &settings)?;
         camera
@@ -493,7 +512,7 @@ fn camera_loop(
     eprintln!(
         "camera-square-rs: native camera ready; still stride={still_stride}, view stride={view_stride}"
     );
-    let mut pending_capture: Option<(PathBuf, mpsc::Sender<io::Result<()>>)> = None;
+    let mut pending_capture: Option<(PathBuf, mpsc::Sender<io::Result<()>>, usize, Instant)> = None;
     let mut capture_worker: Option<JoinHandle<()>> = None;
     'camera: loop {
         loop {
@@ -506,7 +525,7 @@ fn camera_loop(
                             "capture already in progress",
                         )));
                     } else {
-                        pending_capture = Some((path, reply));
+                        pending_capture = Some((path, reply, settings.shutter, Instant::now()));
                     }
                 }
                 Ok(Command::SetAdjustments(updated)) => {
@@ -528,6 +547,17 @@ fn camera_loop(
                 .expect("finished capture worker")
                 .join();
         }
+        if pending_capture
+            .as_ref()
+            .is_some_and(|(_, _, _, started)| started.elapsed() > Duration::from_secs(12))
+        {
+            if let Some((_, reply, _, _)) = pending_capture.take() {
+                let _ = reply.send(Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "shutter exposure did not settle",
+                )));
+            }
+        }
         let mut request = match completed.recv_timeout(Duration::from_millis(120)) {
             Ok(request) => request,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -547,7 +577,23 @@ fn camera_loop(
             copy_view_frame(&view_planes, &mut slot, view_stride, size.view_height)?;
         }
         signal_frame(&event);
-        if let Some((path, reply)) = pending_capture.take() {
+        let request_index = request
+            .cookie()
+            .checked_sub(1)
+            .map(|cookie| cookie as usize);
+        let ready_for_capture = pending_capture.as_ref().is_some_and(|(_, _, shutter, _)| {
+            request_index.is_some_and(|index| applied_shutters.get(index) == Some(shutter))
+                && exposure_matches(
+                    *shutter,
+                    request
+                        .metadata()
+                        .get::<ExposureTime>()
+                        .ok()
+                        .map(|value| value.0),
+                )
+        });
+        if ready_for_capture {
+            let (path, reply, _, _) = pending_capture.take().expect("capture is pending");
             let started = Instant::now();
             let metadata = PhotoMetadata {
                 width: size.still_width as u32,
@@ -656,6 +702,9 @@ fn camera_loop(
         }
         request.reuse(ReuseFlag::REUSE_BUFFERS);
         apply_controls(&mut request, &settings)?;
+        if let Some(slot) = request_index.and_then(|index| applied_shutters.get_mut(index)) {
+            *slot = settings.shutter;
+        }
         camera
             .queue_request(request)
             .map_err(|(_, error)| camera_error(error))?;
@@ -850,4 +899,17 @@ fn save_jpeg(
 
 fn camera_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+#[cfg(test)]
+mod shutter_tests {
+    use super::exposure_matches;
+
+    #[test]
+    fn waits_for_the_new_exposure_after_a_long_shutter() {
+        assert!(!exposure_matches(16, Some(1_999_965)));
+        assert!(exposure_matches(16, Some(110)));
+        assert!(!exposure_matches(2, Some(110)));
+        assert!(exposure_matches(2, Some(1_999_965)));
+    }
 }
