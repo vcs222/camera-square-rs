@@ -302,19 +302,6 @@ fn exposure_matches(shutter: usize, actual_us: Option<i32>) -> bool {
     actual_us.is_some_and(|actual| (actual - expected).abs() <= (expected / 10).max(25))
 }
 
-#[cfg(test)]
-mod shutter_tests {
-    use super::exposure_matches;
-
-    #[test]
-    fn waits_for_the_new_exposure_after_a_long_shutter() {
-        assert!(!exposure_matches(16, Some(1_999_965)));
-        assert!(exposure_matches(16, Some(110)));
-        assert!(!exposure_matches(2, Some(110)));
-        assert!(exposure_matches(2, Some(1_999_965)));
-    }
-}
-
 fn camera_loop(
     event: Arc<OwnedFd>,
     latest: Arc<Mutex<Vec<u8>>>,
@@ -912,4 +899,17 @@ fn save_jpeg(
 
 fn camera_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+#[cfg(test)]
+mod shutter_tests {
+    use super::exposure_matches;
+
+    #[test]
+    fn waits_for_the_new_exposure_after_a_long_shutter() {
+        assert!(!exposure_matches(16, Some(1_999_965)));
+        assert!(exposure_matches(16, Some(110)));
+        assert!(!exposure_matches(2, Some(110)));
+        assert!(exposure_matches(2, Some(1_999_965)));
+    }
 }

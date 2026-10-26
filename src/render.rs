@@ -27,7 +27,7 @@ pub const DIAL_STEP_DEGREES: f64 = 360.0 / SHUTTERS.len() as f64;
 
 pub fn shutter_dial_geometry(width: usize, height: usize) -> (i32, i32, i32) {
     let radius = (width.min(height.saturating_sub(100)) as i32 / 3).clamp(70, 180);
-    (width as i32 / 2, (height as i32 - 100) / 2 + 20, radius)
+    (width as i32 / 2, height as i32 / 2, radius)
 }
 
 fn dial_point(cx: i32, cy: i32, radius: i32, degrees: f64) -> (i32, i32) {
@@ -752,6 +752,7 @@ mod slider_tests {
     #[test]
     fn shutter_dial_positions_map_to_each_speed() {
         let (cx, cy, radius) = shutter_dial_geometry(720, 720);
+        assert_eq!((cx, cy), (360, 360));
         for index in 0..SHUTTERS.len() {
             let (x, y) = dial_point(cx, cy, radius - 20, shutter_dial_angle(index, 0, 0.0));
             let angle = shutter_dial_touch_angle(x, y, 720, 720).unwrap();
