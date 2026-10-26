@@ -65,6 +65,36 @@ impl Canvas<'_> {
         }
     }
 
+    /// Blend a rectangle with 50% black while retaining the RGB565 preview beneath it.
+    pub fn darken_rect_half(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let (width, height) = self.bounds();
+        let left = i64::from(x).max(0).min(width) as usize;
+        let right = (i64::from(x) + i64::from(w)).max(0).min(width) as usize;
+        let top = i64::from(y).max(0).min(height) as usize;
+        let bottom = (i64::from(y) + i64::from(h)).max(0).min(height) as usize;
+        if left >= right || top >= bottom {
+            return;
+        }
+        for row in top..bottom {
+            let Some(start) = row
+                .checked_mul(self.stride)
+                .and_then(|offset| offset.checked_add(left))
+            else {
+                break;
+            };
+            if start >= self.pixels.len() {
+                break;
+            }
+            let end = start.saturating_add(right - left).min(self.pixels.len());
+            for pixel in &mut self.pixels[start..end] {
+                *pixel = (*pixel & 0xf7de) >> 1;
+            }
+        }
+    }
+
     /// Filled circle, matching the original C drawing primitive.
     pub fn circle(&mut self, cx: i32, cy: i32, radius: i32, color: u16) {
         if radius < 0 {
@@ -217,5 +247,23 @@ fn glyph(character: char) -> &'static [u8; 41] {
         '/' => b"00001/00010/00100/01000/10000/00000/00000",
         '.' => b"00000/00000/00000/00000/00000/00110/00110",
         _ => b"00000/00000/00000/00000/00000/00000/00000",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn half_dark_panel_preserves_preview_colors_outside_its_bounds() {
+        let mut pixels = [0xffff, 0xf800, 0x07e0, 0x001f];
+        let mut canvas = Canvas {
+            pixels: &mut pixels,
+            width: 2,
+            height: 2,
+            stride: 2,
+        };
+        canvas.darken_rect_half(0, 0, 1, 2);
+        assert_eq!(pixels, [0x7bef, 0xf800, 0x03e0, 0x001f]);
     }
 }

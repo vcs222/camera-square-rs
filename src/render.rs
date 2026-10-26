@@ -479,12 +479,11 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
             let span = right - left;
             let thumb = left + span * i32::from(camera.saturation_tenths) / 20;
             let panel_left = (left - 36).max(0);
-            canvas.fill_rect(
+            canvas.darken_rect_half(
                 panel_left,
                 SATURATION_SLIDER_TOUCH_TOP,
                 (width - panel_left * 2).max(1),
                 SATURATION_SLIDER_TOUCH_BOTTOM - SATURATION_SLIDER_TOUCH_TOP,
-                INK,
             );
             canvas.fill_rect(left, 119, span, 4, QUIET);
             canvas.fill_rect(left, 119, thumb - left, 4, PAPER);
