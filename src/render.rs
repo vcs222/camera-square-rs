@@ -22,6 +22,20 @@ pub const TOP_WIDTHS: [i32; 8] = [42, 38, 52, 64, 76, 112, 108, 48];
 pub const TOP_GAP: i32 = 20;
 // Start below the centered controls' 64px hit area.
 const TOP_PICKER_LIST_TOP: i32 = 72;
+pub const SATURATION_SLIDER_TOUCH_TOP: i32 = 78;
+pub const SATURATION_SLIDER_TOUCH_BOTTOM: i32 = 174;
+
+pub fn saturation_slider_bounds(width: usize) -> (i32, i32) {
+    let width = width as i32;
+    let margin = (width / 12).clamp(12, 60).min((width - 2).max(0) / 2);
+    (margin, (width - margin - 1).max(margin + 1))
+}
+
+pub fn saturation_slider_value(x: i32, width: usize) -> u8 {
+    let (left, right) = saturation_slider_bounds(width);
+    let span = right - left;
+    (((x - left).clamp(0, span) * 20 + span / 2) / span) as u8
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct PreviewFrameLayout {
@@ -125,9 +139,10 @@ pub fn picker_labels(_settings: &CameraSettings, picker: Picker) -> Vec<String> 
         Picker::Iso => ISOS.iter().map(|v| v.label.to_string()).collect(),
         Picker::WhiteBalance => WB_PICKER.iter().map(|s| s.to_string()).collect(),
         Picker::Metering => METERING.iter().map(|v| v.label.to_string()).collect(),
-        Picker::Sharpness | Picker::Contrast | Picker::Saturation => {
+        Picker::Sharpness | Picker::Contrast => {
             VALUE_LABELS.iter().map(|s| s.to_string()).collect()
         }
+        Picker::Saturation => Vec::new(),
         Picker::Brightness => BRIGHTNESS_LABELS.iter().map(|s| s.to_string()).collect(),
         Picker::Ev => (-30..=30).map(ev_picker_label).collect(),
         Picker::Aspect => ASPECT_RATIOS.iter().map(|v| v.label.to_string()).collect(),
@@ -149,7 +164,7 @@ pub fn picker_selected(settings: &CameraSettings, picker: Picker) -> usize {
         Picker::Sharpness => settings.sharpness,
         Picker::Contrast => settings.contrast,
         Picker::Brightness => settings.brightness,
-        Picker::Saturation => settings.saturation,
+        Picker::Saturation => usize::from(settings.saturation_tenths),
         Picker::Ev => (settings.ev_thirds + 30) as usize,
         Picker::Aspect => settings.aspect,
         Picker::CaptureFormat => CaptureFormat::ALL
@@ -194,7 +209,9 @@ pub fn picker_list_top(
 pub fn shutter_display_y(width: usize, height: usize, state: &UiState, now: Instant) -> i32 {
     if state.picker_is_open(now) {
         let list_top = picker_list_top(width, height, &state.camera, state.picker);
-        let list_height = if state.picker == Picker::Ev {
+        let list_height = if state.picker == Picker::Saturation {
+            SATURATION_SLIDER_TOUCH_BOTTOM - TOP_PICKER_LIST_TOP
+        } else if state.picker == Picker::Ev {
             35
         } else {
             7 * picker_scale(width, &state.camera, state.picker)
@@ -434,10 +451,11 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     draw_grid(canvas, state);
     gallery_icon(canvas, top_item_x(canvas.width, 0));
     screenshot_icon(canvas, top_item_x(canvas.width, 1));
+    let saturation_label = camera.saturation_label();
     for (item, label, value, offset) in [
         (2, "C", VALUE_LABELS[camera.contrast], 16),
         (3, "B", BRIGHTNESS_LABELS[camera.brightness], 16),
-        (4, "SAT", VALUE_LABELS[camera.saturation], 40),
+        (4, "SAT", saturation_label.as_str(), 40),
         (5, "DN", DENOISE[camera.denoise].label, 28),
         (6, "GRID", state.composition_grid.label(), 52),
     ] {
@@ -456,7 +474,28 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     );
     if state.picker_is_open(now) {
         let top = picker_list_top(canvas.width, canvas.height, camera, state.picker);
-        if state.picker == Picker::Ev {
+        if state.picker == Picker::Saturation {
+            let (left, right) = saturation_slider_bounds(canvas.width);
+            let span = right - left;
+            let thumb = left + span * i32::from(camera.saturation_tenths) / 20;
+            let panel_left = (left - 36).max(0);
+            canvas.fill_rect(
+                panel_left,
+                SATURATION_SLIDER_TOUCH_TOP,
+                (width - panel_left * 2).max(1),
+                SATURATION_SLIDER_TOUCH_BOTTOM - SATURATION_SLIDER_TOUCH_TOP,
+                INK,
+            );
+            canvas.fill_rect(left, 119, span, 4, QUIET);
+            canvas.fill_rect(left, 119, thumb - left, 4, PAPER);
+            canvas.circle(thumb, 121, 10, PAPER);
+            canvas.circle(thumb, 121, 5, INK);
+            canvas.text(left, 86, "SATURATION", 2, PAPER);
+            canvas.text(right - 36, 86, &saturation_label, 2, PAPER);
+            canvas.text(left, 147, "0.0", 2, SOFT_PAPER);
+            canvas.text((left + right) / 2 - 18, 147, "1.0", 2, SOFT_PAPER);
+            canvas.text(right - 36, 147, "2.0", 2, SOFT_PAPER);
+        } else if state.picker == Picker::Ev {
             let cell_width = width / 5;
             for slot in 0..5 {
                 let thirds = camera.ev_thirds as i32 + slot - 2;
@@ -577,5 +616,20 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
             2,
             PAPER,
         );
+    }
+}
+
+#[cfg(test)]
+mod slider_tests {
+    use super::*;
+
+    #[test]
+    fn saturation_slider_reaches_full_range() {
+        for width in [480, 720] {
+            let (left, right) = saturation_slider_bounds(width);
+            assert_eq!(saturation_slider_value(left - 20, width), 0);
+            assert_eq!(saturation_slider_value((left + right) / 2, width), 10);
+            assert_eq!(saturation_slider_value(right + 20, width), 20);
+        }
     }
 }

@@ -17,15 +17,15 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 
 ## Image adjustments
 
-The top-row **C**, **B**, and **SAT** controls adjust contrast, brightness, and saturation. They offer these picker values:
+The top-row **C** and **B** controls adjust contrast and brightness. **SAT** opens a slider for saturation:
 
 | Setting | Choices | Default |
 | --- | --- | --- |
 | Contrast | 0.0, 0.5, 1.0, 1.5, 2.0 | 1.0 |
 | Brightness | −1.0, −0.5, 0.0, +0.5, +1.0 | 0.0 |
-| Saturation | 0.0, 0.5, 1.0, 1.5, 2.0 | 1.0 |
+| Saturation | 0.0 to 2.0 in 0.1 steps | 1.0 |
 
-These are convenient picker steps, not the full range accepted by `rpicam`. A saturation of 0.0 produces grayscale.
+Drag the saturation slider to choose a value. Its handle and readout follow your finger; releasing applies the value to the live preview and future photos. Tap the track to choose a value directly. A saturation of 0.0 produces grayscale. Contrast and brightness still use picker steps rather than the full range accepted by `rpicam`.
 
 **DN** selects denoise: Auto, Off, colour-denoise off, Fast, or High quality. Off disables spatial and colour denoise; colour-denoise off disables only colour denoise. High-quality colour denoise can reduce preview throughput. HDR is not offered in this app; see [camera support](camera-support.md) for the hardware reason.
 

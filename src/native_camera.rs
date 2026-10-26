@@ -256,7 +256,7 @@ fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Resul
         .set(Brightness(settings.brightness as f32 / 2.0 - 1.0))
         .map_err(camera_error)?;
     controls
-        .set(Saturation(settings.saturation as f32 / 2.0))
+        .set(Saturation(settings.saturation_value()))
         .map_err(camera_error)?;
     if settings.denoise != 0 {
         let mode = match settings.denoise {
