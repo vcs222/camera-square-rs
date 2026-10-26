@@ -1,7 +1,7 @@
 //! Camera access with a persistent native session and rpicam compatibility path.
 
 use crate::settings::{
-    ASPECT_RATIOS, CameraSettings, DENOISE, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
+    ASPECT_RATIOS, BULB_INDEX, CameraSettings, DENOISE, ISOS, METERING, SHUTTERS, WHITE_BALANCES,
 };
 use std::fs;
 use std::io::{self, Read};
@@ -33,6 +33,7 @@ pub fn prepare_still_capabilities() {
 fn validate(settings: &CameraSettings) -> io::Result<()> {
     if settings.aspect >= ASPECT_RATIOS.len()
         || settings.shutter >= SHUTTERS.len()
+        || settings.shutter == BULB_INDEX
         || settings.iso >= ISOS.len()
         || settings.white_balance >= WHITE_BALANCES.len()
         || settings.metering >= METERING.len()
@@ -195,7 +196,13 @@ impl Preview {
                 "--height",
                 &height.to_string(),
             ])
-            .args(["--framerate", "12", "--flush", "--output", "-"])
+            .args([
+                "--framerate",
+                &preview_framerate(settings).to_string(),
+                "--flush",
+                "--output",
+                "-",
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -262,7 +269,7 @@ impl Preview {
     /// Update the native shutter control without restarting its preview.
     /// Returns false when the compatibility preview needs a restart instead.
     pub fn set_shutter_live(&self, index: usize) -> io::Result<bool> {
-        if index >= SHUTTERS.len() {
+        if index >= SHUTTERS.len() || index == BULB_INDEX {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid shutter speed",
@@ -309,6 +316,15 @@ impl Preview {
     }
 }
 
+fn preview_framerate(settings: &CameraSettings) -> f64 {
+    let exposure = SHUTTERS[settings.shutter].value;
+    if exposure > 0 {
+        (1_000_000.0 / f64::from((exposure + 10_000).max(83_333))).min(12.0)
+    } else {
+        12.0
+    }
+}
+
 impl Drop for Preview {
     fn drop(&mut self) {
         let _ = self.stop();
@@ -350,11 +366,13 @@ pub fn capture_jpeg(settings: &CameraSettings, output_path: impl AsRef<Path>) ->
     let mut command = Command::new("/usr/bin/rpicam-still");
     // This is a new camera process, so automatic exposure starts over. Keep a
     // short warm-up by default and allow a longer one in difficult lighting.
-    let timeout_ms = std::env::var("CAMERA_SQUARE_STILL_TIMEOUT_MS")
+    let configured_timeout_ms = std::env::var("CAMERA_SQUARE_STILL_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value <= 5_000)
         .unwrap_or(350);
+    let exposure_us = SHUTTERS[settings.shutter].value.max(0) as u32;
+    let timeout_ms = configured_timeout_ms.max(exposure_us.div_ceil(1_000).saturating_add(350));
     command
         .args([
             "--nopreview",

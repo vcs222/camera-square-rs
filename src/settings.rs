@@ -102,64 +102,79 @@ pub struct Choice<T> {
     pub value: T,
 }
 
-pub const SHUTTERS: [Choice<i32>; 14] = [
+/// Fuji-style dial order. B occupies a visual slot but is deliberately unselectable.
+pub const SHUTTERS: [Choice<i32>; 17] = [
     Choice {
         label: "A",
         value: 0,
+    },
+    Choice {
+        label: "B",
+        value: 0,
+    },
+    Choice {
+        label: "T",
+        value: 2_000_000,
+    },
+    Choice {
+        label: "1",
+        value: 1_000_000,
+    },
+    Choice {
+        label: "2",
+        value: 500_000,
+    },
+    Choice {
+        label: "4",
+        value: 250_000,
+    },
+    Choice {
+        label: "8",
+        value: 125_000,
     },
     Choice {
         label: "15",
         value: 66_666,
     },
     Choice {
-        label: "20",
-        value: 50_000,
-    },
-    Choice {
         label: "30",
         value: 33_333,
     },
     Choice {
-        label: "40",
-        value: 25_000,
-    },
-    Choice {
         label: "60",
-        value: 16_000,
-    },
-    Choice {
-        label: "80",
-        value: 12_500,
+        value: 16_667,
     },
     Choice {
         label: "125",
         value: 8_000,
     },
     Choice {
-        label: "160",
-        value: 6_250,
-    },
-    Choice {
         label: "250",
         value: 4_000,
-    },
-    Choice {
-        label: "320",
-        value: 3_125,
     },
     Choice {
         label: "500",
         value: 2_000,
     },
     Choice {
-        label: "640",
-        value: 1_562,
-    },
-    Choice {
         label: "1000",
         value: 1_000,
     },
+    Choice {
+        label: "2000",
+        value: 500,
+    },
+    Choice {
+        label: "4000",
+        value: 250,
+    },
+    Choice {
+        label: "8000",
+        value: 125,
+    },
 ];
+
+pub const BULB_INDEX: usize = 1;
 
 pub const ISOS: [Choice<f32>; 6] = [
     Choice {

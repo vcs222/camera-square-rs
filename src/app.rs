@@ -19,7 +19,8 @@ use crate::render::{
     picker_list_top, picker_scale, picker_selected, shutter_display_y,
 };
 use crate::settings::{
-    ASPECT_RATIOS, CaptureFormat, DENOISE, ISOS, METERING, Picker, SHUTTERS, WHITE_BALANCES,
+    ASPECT_RATIOS, BULB_INDEX, CaptureFormat, DENOISE, ISOS, METERING, Picker, SHUTTERS,
+    WHITE_BALANCES,
 };
 use crate::state::UiState;
 
@@ -73,6 +74,8 @@ struct Gesture {
     shutter_offset: (i32, i32),
     adjustment_at_start: i16,
     shutter_at_start: usize,
+    dial_last_angle: f64,
+    dial_rotation: f64,
 }
 
 fn top_item_at(x: i32, y: i32, width: usize) -> Option<usize> {
@@ -133,7 +136,7 @@ fn hit_test(state: &UiState, x: i32, y: i32, width: usize, height: usize, now: I
     }
     if state.picker == Picker::Shutter
         && state.picker_is_open(now)
-        && render::shutter_dial_index_at(x, y, width, height).is_some()
+        && render::shutter_dial_touch_angle(x, y, width, height).is_some()
     {
         return Hit::ShutterDial;
     }
@@ -201,7 +204,9 @@ fn picker_choice_at(state: &UiState, x: i32, y: i32, width: usize, height: usize
 fn apply_picker(state: &mut UiState, index: usize) -> io::Result<bool> {
     let camera = &mut state.camera;
     let changed = match state.picker {
-        Picker::Shutter if index < SHUTTERS.len() => replace(&mut camera.shutter, index),
+        Picker::Shutter if index < SHUTTERS.len() && index != BULB_INDEX => {
+            replace(&mut camera.shutter, index)
+        }
         Picker::Iso if index < ISOS.len() => replace(&mut camera.iso, index),
         Picker::WhiteBalance if index < WHITE_BALANCES.len() => {
             replace(&mut camera.white_balance, index)
@@ -231,12 +236,21 @@ fn update_adjustment_slider(state: &mut UiState, picker: Picker, x: i32, width: 
         .set_slider_value(picker, render::slider_value_at(picker, x, width))
 }
 
-fn update_shutter_dial(state: &mut UiState, x: i32, y: i32, width: usize, height: usize) -> bool {
-    let Some(index) = render::shutter_dial_index_at(x, y, width, height) else {
-        return false;
-    };
+fn update_shutter_dial_drag(state: &mut UiState, gesture: &mut Gesture, angle: f64) -> bool {
+    let delta = (angle - gesture.dial_last_angle + 540.0).rem_euclid(360.0) - 180.0;
+    gesture.dial_last_angle = angle;
+    gesture.dial_rotation += delta;
+    let steps = (-gesture.dial_rotation / render::DIAL_STEP_DEGREES).round() as isize;
+    let mut target =
+        (gesture.shutter_at_start as isize + steps).rem_euclid(SHUTTERS.len() as isize) as usize;
+    if target == BULB_INDEX {
+        target = if steps < 0 { 0 } else { 2 };
+    }
+    let changed = replace(&mut state.camera.shutter, target);
+    state.shutter_dial_offset_degrees =
+        gesture.dial_rotation + steps as f64 * render::DIAL_STEP_DEGREES;
     state.refresh_picker_timeout();
-    replace(&mut state.camera.shutter, index)
+    changed
 }
 
 fn trace_touch() -> bool {
@@ -618,6 +632,14 @@ fn apply_touch_frame(
                 shutter_offset,
                 adjustment_at_start: state.camera.slider_value(state.picker).unwrap_or_default(),
                 shutter_at_start: state.camera.shutter,
+                dial_last_angle: render::shutter_dial_touch_angle(
+                    x,
+                    y,
+                    display.width,
+                    display.height,
+                )
+                .unwrap_or(0.0),
+                dial_rotation: 0.0,
             });
             if let Hit::Control(picker) = target {
                 state.open_picker(picker);
@@ -644,11 +666,6 @@ fn apply_touch_frame(
                     background,
                 );
             } else if matches!(target, Hit::ShutterDial) && frame.count == 1 {
-                if update_shutter_dial(state, x, y, display.width, display.height) {
-                    if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
-                        eprintln!("camera-square-rs: live shutter: {error}");
-                    }
-                }
                 let _ = render_current(
                     display,
                     state,
@@ -702,22 +719,26 @@ fn apply_touch_frame(
                             background,
                         );
                     }
-                } else if matches!(current.target, Hit::ShutterDial)
-                    && current.max_contacts == 1
-                    && update_shutter_dial(state, x, y, display.width, display.height)
-                {
-                    current.dragged = true;
-                    if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
-                        eprintln!("camera-square-rs: live shutter: {error}");
+                } else if matches!(current.target, Hit::ShutterDial) && current.max_contacts == 1 {
+                    if let Some(angle) =
+                        render::shutter_dial_touch_angle(x, y, display.width, display.height)
+                    {
+                        let changed = update_shutter_dial_drag(state, &mut current, angle);
+                        current.dragged |= current.dial_rotation.abs() > 3.0;
+                        if changed {
+                            if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
+                                eprintln!("camera-square-rs: live shutter: {error}");
+                            }
+                        }
+                        let _ = render_current(
+                            display,
+                            state,
+                            preview,
+                            camera_frame,
+                            *frame_ready,
+                            background,
+                        );
                     }
-                    let _ = render_current(
-                        display,
-                        state,
-                        preview,
-                        camera_frame,
-                        *frame_ready,
-                        background,
-                    );
                 }
             }
             *gesture = Some(current);
@@ -755,6 +776,7 @@ fn apply_touch_frame(
             }
             if current.max_contacts > 1 && matches!(current.target, Hit::ShutterDial) {
                 state.camera.shutter = current.shutter_at_start;
+                state.shutter_dial_offset_degrees = 0.0;
                 if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
                     eprintln!("camera-square-rs: live shutter: {error}");
                 }
@@ -774,7 +796,18 @@ fn apply_touch_frame(
                 match current.target {
                     Hit::ShutterDial => {
                         state.open_picker(Picker::Shutter);
-                        update_shutter_dial(state, x, y, display.width, display.height);
+                        if !current.dragged {
+                            if let Some(angle) = render::shutter_dial_touch_angle(
+                                x,
+                                y,
+                                display.width,
+                                display.height,
+                            ) {
+                                state.camera.shutter =
+                                    render::shutter_dial_target(state.camera.shutter, angle);
+                            }
+                        }
+                        state.shutter_dial_offset_degrees = 0.0;
                         if state.camera.shutter != current.shutter_at_start {
                             match preview.set_shutter_live(state.camera.shutter) {
                                 Ok(true) => {}

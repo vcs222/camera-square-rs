@@ -6,7 +6,7 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 
 | Control | Choices and behavior |
 | --- | --- |
-| Shutter (**SS**) | Auto and 1/15 to 1/1000 s, with intermediate speeds at 1/20, 1/40, 1/80, 1/160, 1/320, and 1/640 s. Numeric labels are denominators: **60** means 1/60 s. |
+| Shutter (**SS**) | A (auto), B (disabled), T (2 seconds), 1, 2, 4, 8, 15, 30, 60, 125, 250, 500, 1000, 2000, 4000, 8000. Numeric labels are denominators except **1**, which means one second. |
 | Gain (**ISO**) | Auto, 100, 200, 400, 800, or 1600. These labels map to automatic gain, then fixed gains of 1×, 2×, 4×, 8×, and 16×; they are not calibrated ISO values. |
 | White balance (**WB**) | Auto, daylight, cloudy, indoor, fluorescent, tungsten. The UI shortens some labels to fit. |
 | Metering (**MTR**) | Centre, spot, or average. A small on-screen guide illustrates the selected area; guides do not affect the captured image. |
@@ -15,7 +15,7 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 | Aspect ratio | 1:1, 4:3, 3:2, 16:9, or 65:24; default 4:3. Changes both preview framing and still output size. |
 | Capture format | JPEG, DNG, or JPEG+DNG. DNG-only photos have a JPEG gallery preview stored separately from the raw file. |
 
-**SS** opens a round shutter-speed dial with the same half-transparent styling as the sliders. Drag around the marked arc or tap a tick; the selected speed appears in the center. The native camera applies each choice while you move the dial, while the `rpicam` compatibility path applies it on release. The range stays within 1/15–1/1000 s so the preview remains responsive.
+**SS** opens a half-transparent rotating wheel styled after a camera shutter dial. Its printed markings rotate with the wheel and become horizontal at the fixed white line on the left. Drag the wheel or tap a marking to bring it to that line. B is dimmed and skipped because hold-to-expose bulb capture is not implemented. T takes a two-second exposure; the preview updates slowly at T and other long speeds. The native camera applies speeds during a drag; the `rpicam` compatibility path applies the final speed on release. Very fast exposure times can be rounded to the sensor's available timing steps.
 
 ## Image adjustments
 
