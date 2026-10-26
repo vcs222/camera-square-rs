@@ -56,6 +56,7 @@ enum Hit {
     Peak,
     Shutter,
     PickerChoice(usize),
+    SaturationSlider,
     Blank,
 }
 
@@ -69,6 +70,7 @@ struct Gesture {
     max_contacts: usize,
     dragged: bool,
     shutter_offset: (i32, i32),
+    saturation_at_start: u8,
 }
 
 fn top_item_at(x: i32, y: i32, width: usize) -> Option<usize> {
@@ -117,6 +119,14 @@ fn bottom_picker(x: i32, y: i32, width: usize, height: usize) -> Option<Picker> 
 fn hit_test(state: &UiState, x: i32, y: i32, width: usize, height: usize, now: Instant) -> Hit {
     if state.gallery_open {
         return Hit::Gallery;
+    }
+    if state.picker == Picker::Saturation
+        && state.picker_is_open(now)
+        && (render::SATURATION_SLIDER_TOUCH_TOP..render::SATURATION_SLIDER_TOUCH_BOTTOM)
+            .contains(&y)
+        && (0..width as i32).contains(&x)
+    {
+        return Hit::SaturationSlider;
     }
     if state.picker_is_open(now) && picker_is_top_row(state.picker) {
         if let Some(choice) = picker_choice_at(state, x, y, width, height) {
@@ -206,7 +216,6 @@ fn apply_picker(state: &mut UiState, index: usize) -> io::Result<bool> {
         }
         Picker::Contrast if index < 5 => replace(&mut camera.contrast, index),
         Picker::Brightness if index < 5 => replace(&mut camera.brightness, index),
-        Picker::Saturation if index < 5 => replace(&mut camera.saturation, index),
         Picker::Denoise if index < DENOISE.len() => replace(&mut camera.denoise, index),
         _ => return Ok(false),
     };
@@ -218,6 +227,14 @@ fn replace<T: Copy + PartialEq>(slot: &mut T, value: T) -> bool {
     let changed = *slot != value;
     *slot = value;
     changed
+}
+
+fn update_saturation_slider(state: &mut UiState, x: i32, width: usize) -> bool {
+    state.refresh_picker_timeout();
+    replace(
+        &mut state.camera.saturation_tenths,
+        render::saturation_slider_value(x, width),
+    )
 }
 
 fn trace_touch() -> bool {
@@ -597,9 +614,20 @@ fn apply_touch_frame(
                 max_contacts: frame.count,
                 dragged: false,
                 shutter_offset,
+                saturation_at_start: state.camera.saturation_tenths,
             });
             if let Hit::Control(picker) = target {
                 state.open_picker(picker);
+                let _ = render_current(
+                    display,
+                    state,
+                    preview,
+                    camera_frame,
+                    *frame_ready,
+                    background,
+                );
+            } else if matches!(target, Hit::SaturationSlider) && frame.count == 1 {
+                update_saturation_slider(state, x, display.width);
                 let _ = render_current(
                     display,
                     state,
@@ -636,6 +664,19 @@ fn apply_touch_frame(
                         *frame_ready,
                         background,
                     );
+                } else if matches!(current.target, Hit::SaturationSlider)
+                    && current.max_contacts == 1
+                    && update_saturation_slider(state, x, display.width)
+                {
+                    current.dragged = true;
+                    let _ = render_current(
+                        display,
+                        state,
+                        preview,
+                        camera_frame,
+                        *frame_ready,
+                        background,
+                    );
                 }
             }
             *gesture = Some(current);
@@ -653,8 +694,40 @@ fn apply_touch_frame(
                     elapsed.as_millis()
                 );
             }
-            if current.max_contacts == 1 && elapsed < Duration::from_secs(2) {
+            if current.max_contacts > 1 && matches!(current.target, Hit::SaturationSlider) {
+                state.camera.saturation_tenths = current.saturation_at_start;
+                let _ = render_current(
+                    display,
+                    state,
+                    preview,
+                    camera_frame,
+                    *frame_ready,
+                    background,
+                );
+            }
+            if current.max_contacts == 1
+                && (elapsed < Duration::from_secs(2)
+                    || matches!(current.target, Hit::SaturationSlider))
+            {
                 match current.target {
+                    Hit::SaturationSlider => {
+                        state.open_picker(Picker::Saturation);
+                        update_saturation_slider(state, x, display.width);
+                        if state.camera.saturation_tenths != current.saturation_at_start {
+                            state.show_message(
+                                format!("SAT {}", state.camera.saturation_label()),
+                                1.2,
+                            );
+                            restart_preview(
+                                state,
+                                preview,
+                                display,
+                                camera_frame,
+                                preview_retry_at,
+                                frame_ready,
+                            );
+                        }
+                    }
                     Hit::Gallery if state.gallery_open => {
                         let dx = x - current.start.0;
                         let dy = y - current.start.1;
@@ -1003,5 +1076,16 @@ mod top_row_tests {
             let center = render::top_item_x(720, index) + width / 2;
             assert_eq!(top_item_at(center, 30, 720), Some(index));
         }
+    }
+
+    #[test]
+    fn saturation_picker_uses_slider_touch_target() {
+        let mut state = UiState::new(720, 720);
+        state.open_picker(Picker::Saturation);
+        assert!(matches!(
+            hit_test(&state, 360, 121, 720, 720, Instant::now()),
+            Hit::SaturationSlider
+        ));
+        assert_eq!(picker_choice_at(&state, 360, 121, 720, 720), None);
     }
 }

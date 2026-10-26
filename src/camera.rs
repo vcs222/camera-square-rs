@@ -40,7 +40,7 @@ fn validate(settings: &CameraSettings) -> io::Result<()> {
         || settings.sharpness >= 5
         || settings.contrast >= 5
         || settings.brightness >= 5
-        || settings.saturation >= 5
+        || settings.saturation_tenths > 20
         || !(-30..=30).contains(&settings.ev_thirds)
     {
         return Err(io::Error::new(
@@ -67,10 +67,7 @@ fn apply_settings(command: &mut Command, settings: &CameraSettings) {
             "--brightness",
             &format!("{:.1}", settings.brightness as f32 / 2.0 - 1.0),
         ])
-        .args([
-            "--saturation",
-            &format!("{:.1}", settings.saturation as f32 / 2.0),
-        ])
+        .args(["--saturation", &settings.saturation_label()])
         .args(["--denoise", DENOISE[settings.denoise].value])
         .args(["--awb", WHITE_BALANCES[settings.white_balance].value]);
     if SHUTTERS[settings.shutter].value > 0 {

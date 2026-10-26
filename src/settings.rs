@@ -233,7 +233,8 @@ pub struct CameraSettings {
     pub capture_format: CaptureFormat,
     pub contrast: usize,
     pub brightness: usize,
-    pub saturation: usize,
+    /// Saturation in tenths, from 0.0 to 2.0.
+    pub saturation_tenths: u8,
     pub denoise: usize,
 }
 
@@ -250,13 +251,21 @@ impl Default for CameraSettings {
             capture_format: CaptureFormat::Jpeg,
             contrast: 2,
             brightness: 2,
-            saturation: 2,
+            saturation_tenths: 10,
             denoise: 0,
         }
     }
 }
 
 impl CameraSettings {
+    pub fn saturation_value(&self) -> f32 {
+        f32::from(self.saturation_tenths) / 10.0
+    }
+
+    pub fn saturation_label(&self) -> String {
+        format!("{:.1}", self.saturation_value())
+    }
+
     pub fn preview_dimensions(&self, screen_width: usize) -> (usize, usize) {
         let ar = ASPECT_RATIOS[self.aspect];
         let w = screen_width & !1;
