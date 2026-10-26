@@ -25,7 +25,7 @@ The top-row **C** and **B** controls adjust contrast and brightness. **SAT** ope
 | Brightness | −1.0, −0.5, 0.0, +0.5, +1.0 | 0.0 |
 | Saturation | 0.0 to 2.0 in 0.1 steps | 1.0 |
 
-Drag the saturation slider to choose a value. Its half-transparent dark panel keeps the live view visible underneath, while the handle and readout stay solid and follow your finger. Releasing applies the value to the live preview and future photos. Tap the track to choose a value directly. A saturation of 0.0 produces grayscale. Contrast and brightness still use picker steps rather than the full range accepted by `rpicam`.
+Drag the saturation slider to choose a value. Its half-transparent dark panel keeps the live view visible underneath, while the handle and readout stay solid and follow your finger. On the native camera path, the live preview updates as you drag; on the `rpicam` compatibility path, it updates when you release. Tap the track to choose a value directly. A saturation of 0.0 produces grayscale. Contrast and brightness still use picker steps rather than the full range accepted by `rpicam`.
 
 **DN** selects denoise: Auto, Off, colour-denoise off, Fast, or High quality. Off disables spatial and colour denoise; colour-denoise off disables only colour denoise. High-quality colour denoise can reduce preview throughput. HDR is not offered in this app; see [camera support](camera-support.md) for the hardware reason.
 
