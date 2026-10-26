@@ -263,25 +263,35 @@ fn open_gallery(state: &mut UiState) {
             state.gallery = photos;
             state.gallery_index = state.gallery.len().checked_sub(1);
             if let Some(index) = state.gallery_index {
-                match gallery::decode_rgb(&state.gallery[index].path) {
-                    Ok((rgb, width, height)) => {
-                        state.gallery_rgb = rgb;
-                        state.gallery_dimensions = (width, height);
-                    }
+                match load_gallery_photo(state, index) {
+                    Ok(()) => {}
                     Err(error) => {
                         state.gallery_rgb.clear();
                         state.gallery_dimensions = (0, 0);
+                        state.gallery_details = None;
                         state.show_message(format!("GALLERY ERROR: {error}"), 2.0);
                     }
                 }
             } else {
                 state.gallery_rgb.clear();
                 state.gallery_dimensions = (0, 0);
+                state.gallery_details = None;
             }
             state.gallery_open = true;
         }
         Err(error) => state.show_message(format!("GALLERY ERROR: {error}"), 2.0),
     }
+}
+
+fn load_gallery_photo(state: &mut UiState, index: usize) -> io::Result<()> {
+    let photo = &state.gallery[index];
+    let (rgb, width, height) = gallery::decode_rgb(&photo.path)?;
+    let details = gallery::read_details(photo).ok();
+    state.gallery_rgb = rgb;
+    state.gallery_dimensions = (width, height);
+    state.gallery_details = details;
+    state.gallery_index = Some(index);
+    Ok(())
 }
 
 fn gallery_step(state: &mut UiState, delta: isize) {
@@ -293,11 +303,7 @@ fn gallery_step(state: &mut UiState, delta: isize) {
         return;
     }
     let next = next as usize;
-    if let Ok((rgb, width, height)) = gallery::decode_rgb(&state.gallery[next].path) {
-        state.gallery_rgb = rgb;
-        state.gallery_dimensions = (width, height);
-        state.gallery_index = Some(next);
-    }
+    let _ = load_gallery_photo(state, next);
 }
 
 fn capture_path() -> io::Result<PathBuf> {
@@ -849,6 +855,7 @@ fn apply_touch_frame(
                             state.gallery_open = false;
                             state.gallery_rgb.clear();
                             state.gallery_dimensions = (0, 0);
+                            state.gallery_details = None;
                             state.close_picker();
                         } else if dx.abs() >= 64 && dx.abs() > dy.abs() * 3 / 2 {
                             gallery_step(state, if dx < 0 { -1 } else { 1 });

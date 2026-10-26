@@ -7,7 +7,7 @@ use crate::settings::{
     ASPECT_RATIOS, BULB_INDEX, CameraSettings, CaptureFormat, DENOISE, ISOS, METERING, Picker,
     SHUTTERS,
 };
-use crate::state::{CompositionGrid, UiState};
+use crate::state::{CompositionGrid, PhotoFormat, UiState};
 
 const INK: u16 = 0x0000;
 const PAPER: u16 = 0xffff;
@@ -444,6 +444,9 @@ fn translucent_shutter(canvas: &mut Canvas<'_>, cx: i32, cy: i32) {
 
 fn render_gallery(canvas: &mut Canvas<'_>, state: &UiState) {
     canvas.fill_rect(0, 0, canvas.width as i32, canvas.height as i32, INK);
+    let image_top = 72_usize.min(canvas.height);
+    let footer_top = canvas.height.saturating_sub(170).max(image_top);
+    let image_height = footer_top.saturating_sub(image_top);
     let (w, h) = state.gallery_dimensions;
     if w > 0
         && h > 0
@@ -453,12 +456,15 @@ fn render_gallery(canvas: &mut Canvas<'_>, state: &UiState) {
     {
         let mut out_w = canvas.width;
         let mut out_h = h * out_w / w;
-        if out_h > canvas.height {
-            out_h = canvas.height;
+        if out_h > image_height {
+            out_h = image_height;
             out_w = w * out_h / h;
         }
         if out_w > 0 && out_h > 0 {
-            let (left, top) = ((canvas.width - out_w) / 2, (canvas.height - out_h) / 2);
+            let (left, top) = (
+                (canvas.width - out_w) / 2,
+                image_top + (image_height - out_h) / 2,
+            );
             for y in 0..out_h {
                 for x in 0..out_w {
                     let offset = ((y * h / out_h) * w + x * w / out_w) * 3;
@@ -477,29 +483,102 @@ fn render_gallery(canvas: &mut Canvas<'_>, state: &UiState) {
     } else {
         canvas.text(
             canvas.width as i32 / 2 - 54,
-            canvas.height as i32 / 2,
+            (image_top + image_height / 2) as i32,
             "NO PHOTOS",
-            2,
+            3,
             PAPER,
         );
     }
+    canvas.text(102, 24, "GALLERY", 3, PAPER);
     if let Some(index) = state.gallery_index {
         if let Some(photo) = state.gallery.get(index) {
-            let bar_top = canvas.height as i32 - 44;
-            canvas.fill_rect(0, bar_top, canvas.width as i32, 44, INK);
-            canvas.text(12, bar_top + 12, photo.format.label(), 2, PAPER);
+            let position = format!("{}/{}", index + 1, state.gallery.len());
+            canvas.text(
+                canvas.width as i32 - 22 - position.len() as i32 * 12,
+                28,
+                &position,
+                2,
+                PAPER,
+            );
+            let panel = footer_top as i32;
+            canvas.fill_rect(0, panel, canvas.width as i32, 170, INK);
+            canvas.line(20, panel, canvas.width as i32 - 20, panel, QUIET);
+            canvas.text(20, panel + 15, photo.format.label(), 3, PAPER);
+            if let Some(details) = &state.gallery_details {
+                if let Some(date) = &details.captured_at {
+                    canvas.text(360, panel + 19, date, 2, SOFT_PAPER);
+                }
+                let dimensions = if photo.format == PhotoFormat::Dng {
+                    format!("PREVIEW {}X{}", details.width, details.height)
+                } else {
+                    format!("{}X{}", details.width, details.height)
+                };
+                canvas.text(20, panel + 55, &dimensions, 3, PAPER);
+                let sizes = match (photo.format, details.raw_bytes) {
+                    (PhotoFormat::Dng, Some(raw)) => {
+                        format!("DNG {}", gallery_file_size(raw))
+                    }
+                    (PhotoFormat::JpegAndDng, Some(raw)) => format!(
+                        "JPG {}  DNG {}",
+                        gallery_file_size(details.jpeg_bytes),
+                        gallery_file_size(raw)
+                    ),
+                    _ => format!("JPG {}", gallery_file_size(details.jpeg_bytes)),
+                };
+                canvas.text(360, panel + 59, &sizes, 2, SOFT_PAPER);
+                let exposure = details.exposure_us.map_or_else(
+                    || "EXP --".to_string(),
+                    |us| format!("EXP {}", gallery_exposure(us)),
+                );
+                canvas.text(20, panel + 96, &exposure, 3, PAPER);
+                let iso = details
+                    .iso
+                    .map_or_else(|| "ISO --".to_string(), |iso| format!("ISO {iso}"));
+                canvas.text(360, panel + 96, &iso, 3, PAPER);
+            }
             if let Some(stem) = photo.path.file_stem().and_then(|name| name.to_str()) {
                 let name = stem.replace('_', " ").to_ascii_uppercase();
-                canvas.text(160, bar_top + 15, &name, 1, PAPER);
+                canvas.text(20, panel + 137, &name, 2, QUIET);
             }
-            let position = format!("{}/{}", index + 1, state.gallery.len());
-            canvas.text(canvas.width as i32 - 92, bar_top + 15, &position, 1, PAPER);
         }
     }
     for (dx, dy, color) in [(1, 1, INK), (0, 0, PAPER)] {
         canvas.line(22 + dx, 35 + dy, 62 + dx, 35 + dy, color);
         canvas.line(22 + dx, 35 + dy, 36 + dx, 21 + dy, color);
         canvas.line(22 + dx, 35 + dy, 36 + dx, 49 + dy, color);
+    }
+}
+
+fn gallery_file_size(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else {
+        format!("{}KB", bytes.div_ceil(1_000))
+    }
+}
+
+fn gallery_exposure(us: u32) -> String {
+    let choice = SHUTTERS
+        .iter()
+        .enumerate()
+        .skip(2)
+        .filter(|(_, choice)| choice.value > 0)
+        .min_by_key(|(_, choice)| u32::abs_diff(choice.value as u32, us));
+    if let Some((index, choice)) = choice {
+        if u32::abs_diff(choice.value as u32, us) <= (choice.value as u32 / 5).max(25) {
+            return match index {
+                2 => "2S".into(),
+                3 => "1S".into(),
+                _ => format!("1/{}S", choice.label),
+            };
+        }
+    }
+    if us >= 1_000_000 {
+        format!("{:.1}S", us as f64 / 1_000_000.0)
+    } else if us >= 1_000 {
+        format!("{:.1}MS", us as f64 / 1_000.0)
+    } else {
+        format!("{us}US")
     }
 }
 
@@ -762,5 +841,11 @@ mod slider_tests {
         assert_eq!(shutter_dial_touch_angle(cx, cy, 720, 720), None);
         assert_eq!(shutter_dial_target(2, 180.0 - DIAL_STEP_DEGREES), 0);
         assert_eq!(shutter_dial_target(0, 180.0 + DIAL_STEP_DEGREES), 2);
+    }
+
+    #[test]
+    fn gallery_exposure_uses_camera_dial_labels() {
+        assert_eq!(gallery_exposure(110), "1/8000S");
+        assert_eq!(gallery_exposure(1_999_965), "2S");
     }
 }
