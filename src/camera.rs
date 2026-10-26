@@ -247,6 +247,18 @@ impl Preview {
         ))
     }
 
+    /// Update an active native session without interrupting its preview.
+    /// Returns false when the compatibility preview needs a restart instead.
+    pub fn set_saturation_live(&self, tenths: u8) -> io::Result<bool> {
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(native) = &self.native {
+            native.set_saturation(tenths)?;
+            return Ok(true);
+        }
+        let _ = tenths;
+        Ok(false)
+    }
+
     /// Read one complete, stride-padded YUV420 frame after stdout becomes readable.
     pub fn read_frame(&mut self, frame: &mut [u8]) -> io::Result<()> {
         if frame.len() != self.frame_size {

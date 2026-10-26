@@ -627,7 +627,12 @@ fn apply_touch_frame(
                     background,
                 );
             } else if matches!(target, Hit::SaturationSlider) && frame.count == 1 {
-                update_saturation_slider(state, x, display.width);
+                if update_saturation_slider(state, x, display.width) {
+                    if let Err(error) = preview.set_saturation_live(state.camera.saturation_tenths)
+                    {
+                        eprintln!("camera-square-rs: live saturation: {error}");
+                    }
+                }
                 let _ = render_current(
                     display,
                     state,
@@ -669,6 +674,10 @@ fn apply_touch_frame(
                     && update_saturation_slider(state, x, display.width)
                 {
                     current.dragged = true;
+                    if let Err(error) = preview.set_saturation_live(state.camera.saturation_tenths)
+                    {
+                        eprintln!("camera-square-rs: live saturation: {error}");
+                    }
                     let _ = render_current(
                         display,
                         state,
@@ -696,6 +705,9 @@ fn apply_touch_frame(
             }
             if current.max_contacts > 1 && matches!(current.target, Hit::SaturationSlider) {
                 state.camera.saturation_tenths = current.saturation_at_start;
+                if let Err(error) = preview.set_saturation_live(state.camera.saturation_tenths) {
+                    eprintln!("camera-square-rs: live saturation: {error}");
+                }
                 let _ = render_current(
                     display,
                     state,
@@ -718,14 +730,17 @@ fn apply_touch_frame(
                                 format!("SAT {}", state.camera.saturation_label()),
                                 1.2,
                             );
-                            restart_preview(
-                                state,
-                                preview,
-                                display,
-                                camera_frame,
-                                preview_retry_at,
-                                frame_ready,
-                            );
+                            match preview.set_saturation_live(state.camera.saturation_tenths) {
+                                Ok(true) => {}
+                                Ok(false) | Err(_) => restart_preview(
+                                    state,
+                                    preview,
+                                    display,
+                                    camera_frame,
+                                    preview_retry_at,
+                                    frame_ready,
+                                ),
+                            }
                         }
                     }
                     Hit::Gallery if state.gallery_open => {

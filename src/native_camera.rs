@@ -53,6 +53,7 @@ enum Command {
         path: PathBuf,
         reply: mpsc::Sender<io::Result<()>>,
     },
+    SetSaturation(u8),
     Stop,
 }
 
@@ -187,6 +188,12 @@ impl NativePreview {
         Ok(receiver)
     }
 
+    pub fn set_saturation(&self, tenths: u8) -> io::Result<()> {
+        self.commands
+            .send(Command::SetSaturation(tenths))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "native camera stopped"))
+    }
+
     pub fn stop(&mut self) -> io::Result<()> {
         let _ = self.commands.send(Command::Stop);
         if let Some(worker) = self.worker.take() {
@@ -275,7 +282,7 @@ fn camera_loop(
     latest: Arc<Mutex<Vec<u8>>>,
     commands: mpsc::Receiver<Command>,
     ready: &mpsc::SyncSender<io::Result<()>>,
-    settings: CameraSettings,
+    mut settings: CameraSettings,
     size: NativeSize,
 ) -> io::Result<()> {
     let manager = CameraManager::new().map_err(camera_error)?;
@@ -494,6 +501,9 @@ fn camera_loop(
                     } else {
                         pending_capture = Some((path, reply));
                     }
+                }
+                Ok(Command::SetSaturation(tenths)) => {
+                    settings.saturation_tenths = tenths;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
             }
