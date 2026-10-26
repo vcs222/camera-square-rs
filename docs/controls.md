@@ -39,7 +39,7 @@ Contrast, brightness, saturation, sharpness, and EV use sliders. Their half-tran
 
 ## Gallery, screenshots, and shutter
 
-The gallery button opens the newest photo preview. A bottom bar shows its format (`JPG`, `DNG`, or `JPG+DNG`), capture name, and position in the gallery. Swipe left for older photos and right for newer ones; tap the back arrow to return to the camera. Photos are fitted to the screen without changing their aspect ratio.
+The gallery button opens the newest photo preview. A large panel below the image shows its format (`JPG`, `DNG`, or `JPG+DNG`), capture date and time, dimensions, file size, exposure, ISO, and filename when available. DNG-only entries label the dimensions as the JPEG preview size and show the DNG file size. The photo's position appears in the header. Swipe left for older photos and right for newer ones; tap the back arrow to return to the camera. Photos are fitted to the space above the panel without changing their aspect ratio.
 
 The screenshot button saves the current display, including overlays, as a JPEG. The translucent shutter button captures a photo in the selected format. Drag it to reposition it below the top controls; dragging does not take a photo.
 

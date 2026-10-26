@@ -40,6 +40,17 @@ pub struct PhotoEntry {
     pub format: PhotoFormat,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct PhotoDetails {
+    pub width: u32,
+    pub height: u32,
+    pub jpeg_bytes: u64,
+    pub raw_bytes: Option<u64>,
+    pub exposure_us: Option<u32>,
+    pub iso: Option<u32>,
+    pub captured_at: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhotoFormat {
     Jpeg,
@@ -71,6 +82,7 @@ pub struct UiState {
     pub gallery_index: Option<usize>,
     pub gallery_rgb: Vec<u8>,
     pub gallery_dimensions: (usize, usize),
+    pub gallery_details: Option<PhotoDetails>,
     pub screenshot_index: u64,
     pub message: String,
     pub message_deadline: Option<Instant>,
@@ -92,6 +104,7 @@ impl UiState {
             gallery_index: None,
             gallery_rgb: Vec::new(),
             gallery_dimensions: (0, 0),
+            gallery_details: None,
             screenshot_index: 0,
             message: "LIVE".into(),
             message_deadline: None,
