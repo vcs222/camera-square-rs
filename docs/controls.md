@@ -6,7 +6,7 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 
 | Control | Choices and behavior |
 | --- | --- |
-| Shutter (**SS**) | Auto, 1/15, 1/30, 1/60, 1/125, 1/250, 1/500, or 1/1000 s. Numeric labels are denominators: **60** means 1/60 s. |
+| Shutter (**SS**) | Auto and 1/15 to 1/1000 s, with intermediate speeds at 1/20, 1/40, 1/80, 1/160, 1/320, and 1/640 s. Numeric labels are denominators: **60** means 1/60 s. |
 | Gain (**ISO**) | Auto, 100, 200, 400, 800, or 1600. These labels map to automatic gain, then fixed gains of 1×, 2×, 4×, 8×, and 16×; they are not calibrated ISO values. |
 | White balance (**WB**) | Auto, daylight, cloudy, indoor, fluorescent, tungsten. The UI shortens some labels to fit. |
 | Metering (**MTR**) | Centre, spot, or average. A small on-screen guide illustrates the selected area; guides do not affect the captured image. |
@@ -14,6 +14,8 @@ Camera Square puts capture and framing controls on the bottom row, with image ad
 | Exposure compensation (**EV**) | −10.0 to +10.0 in one-third-stop steps. Drag the slider to set it. |
 | Aspect ratio | 1:1, 4:3, 3:2, 16:9, or 65:24; default 4:3. Changes both preview framing and still output size. |
 | Capture format | JPEG, DNG, or JPEG+DNG. DNG-only photos have a JPEG gallery preview stored separately from the raw file. |
+
+**SS** opens a round shutter-speed dial with the same half-transparent styling as the sliders. Drag around the marked arc or tap a tick; the selected speed appears in the center. The native camera applies each choice while you move the dial, while the `rpicam` compatibility path applies it on release. The range stays within 1/15–1/1000 s so the preview remains responsive.
 
 ## Image adjustments
 
@@ -43,7 +45,7 @@ The screenshot button saves the current display, including overlays, as a JPEG. 
 
 ## Picker behavior
 
-Tap a control to open its picker. Tap a value to apply it immediately; the picker stays open so another value can be chosen. The same control leaves its picker open, while another setting control switches to its picker. It closes five seconds after the last setting-control tap or value selection, or when the shutter is pressed.
+Tap a control to open its picker. Tap a choice or use its slider or dial; the picker stays open so another value can be chosen. The same control leaves its picker open, while another setting control switches to its picker. It closes five seconds after the last setting-control tap or value selection, or when the shutter is pressed.
 
 Changing non-slider camera settings restarts the preview, so it briefly pauses. The picker remains open, and the selected settings are also used for still captures. With the native build, unavailable native controls or unsupported stream configurations switch to the `rpicam` path. Settings return to their defaults when the app restarts.
 

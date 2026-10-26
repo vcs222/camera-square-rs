@@ -259,6 +259,24 @@ impl Preview {
         Ok(false)
     }
 
+    /// Update the native shutter control without restarting its preview.
+    /// Returns false when the compatibility preview needs a restart instead.
+    pub fn set_shutter_live(&self, index: usize) -> io::Result<bool> {
+        if index >= SHUTTERS.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid shutter speed",
+            ));
+        }
+        #[cfg(all(target_os = "linux", feature = "native-camera"))]
+        if let Some(native) = &self.native {
+            native.set_shutter(index)?;
+            return Ok(true);
+        }
+        let _ = index;
+        Ok(false)
+    }
+
     /// Read one complete, stride-padded YUV420 frame after stdout becomes readable.
     pub fn read_frame(&mut self, frame: &mut [u8]) -> io::Result<()> {
         if frame.len() != self.frame_size {
