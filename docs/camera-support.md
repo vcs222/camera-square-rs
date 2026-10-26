@@ -6,7 +6,7 @@ Camera Square is designed for the Raspberry Pi camera stack. With the `native-ca
 
 | Control | Support in Camera Square | Notes |
 | --- | --- | --- |
-| Shutter speed | Limited choices | Auto and fixed values up to 1/1000 s; custom speeds and long exposures are not exposed. |
+| Shutter speed | Limited choices | Auto and 13 fixed values from 1/15 to 1/1000 s on a rotary dial; custom speeds and long exposures are not exposed. |
 | Gain / ISO | Limited choices | Discrete gain values with nominal ISO labels; no continuous control or measured ISO readout. |
 | White balance | Modes | Auto, daylight, cloudy, indoor, fluorescent, and tungsten. Custom modes and fixed gains are not exposed. |
 | Metering | Centre, spot, average | Each mode is passed to preview and still capture. Guides are visual aids only. |

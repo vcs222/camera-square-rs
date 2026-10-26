@@ -21,6 +21,46 @@ pub const TOP_GAP: i32 = 20;
 const TOP_PICKER_LIST_TOP: i32 = 72;
 pub const SLIDER_HEIGHT: i32 = 96;
 const TOP_SLIDER_TOP: i32 = 78;
+const DIAL_START_DEGREES: f64 = 135.0;
+const DIAL_SWEEP_DEGREES: f64 = 270.0;
+
+pub fn shutter_dial_geometry(width: usize, height: usize) -> (i32, i32, i32) {
+    let radius = (width.min(height.saturating_sub(100)) as i32 / 3).clamp(70, 180);
+    (width as i32 / 2, (height as i32 - 100) / 2 + 20, radius)
+}
+
+fn dial_point(cx: i32, cy: i32, radius: i32, degrees: f64) -> (i32, i32) {
+    let angle = degrees.to_radians();
+    (
+        cx + (f64::from(radius) * angle.cos()).round() as i32,
+        cy + (f64::from(radius) * angle.sin()).round() as i32,
+    )
+}
+
+fn shutter_dial_angle(index: usize) -> f64 {
+    DIAL_START_DEGREES + DIAL_SWEEP_DEGREES * index as f64 / (SHUTTERS.len() - 1) as f64
+}
+
+pub fn shutter_dial_index_at(x: i32, y: i32, width: usize, height: usize) -> Option<usize> {
+    let (cx, cy, radius) = shutter_dial_geometry(width, height);
+    let dx = f64::from(x - cx);
+    let dy = f64::from(y - cy);
+    let distance = dx.hypot(dy);
+    if distance < f64::from(radius) * 0.56 || distance > f64::from(radius + 14) {
+        return None;
+    }
+    let mut angle = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+    if angle < DIAL_START_DEGREES {
+        angle += 360.0;
+    }
+    if angle > DIAL_START_DEGREES + DIAL_SWEEP_DEGREES {
+        return None;
+    }
+    Some(
+        ((angle - DIAL_START_DEGREES) * (SHUTTERS.len() - 1) as f64 / DIAL_SWEEP_DEGREES).round()
+            as usize,
+    )
+}
 
 pub fn slider_bounds(width: usize) -> (i32, i32) {
     let width = width as i32;
@@ -150,7 +190,7 @@ pub fn render_preview(
 pub fn picker_labels(_settings: &CameraSettings, picker: Picker) -> Vec<String> {
     match picker {
         Picker::None => Vec::new(),
-        Picker::Shutter => SHUTTERS.iter().map(|v| v.label.to_string()).collect(),
+        Picker::Shutter => Vec::new(),
         Picker::Iso => ISOS.iter().map(|v| v.label.to_string()).collect(),
         Picker::WhiteBalance => WB_PICKER.iter().map(|s| s.to_string()).collect(),
         Picker::Metering => METERING.iter().map(|v| v.label.to_string()).collect(),
@@ -222,6 +262,15 @@ pub fn picker_list_top(
 
 pub fn shutter_display_y(width: usize, height: usize, state: &UiState, now: Instant) -> i32 {
     if state.picker_is_open(now) {
+        if state.picker == Picker::Shutter {
+            let (cx, cy, radius) = shutter_dial_geometry(width, height);
+            let dx = state.shutter_x - cx;
+            let dy = state.shutter_y - cy;
+            if dx * dx + dy * dy <= (radius + 40) * (radius + 40) {
+                return (cy + radius + 48).min(height as i32 - 136);
+            }
+            return state.shutter_y;
+        }
         let list_top = picker_list_top(width, height, &state.camera, state.picker);
         let list_height = if state.picker.is_slider() {
             SLIDER_HEIGHT
@@ -451,6 +500,55 @@ fn render_gallery(canvas: &mut Canvas<'_>, state: &UiState) {
     }
 }
 
+fn draw_shutter_dial(canvas: &mut Canvas<'_>, selected: usize) {
+    let (cx, cy, radius) = shutter_dial_geometry(canvas.width, canvas.height);
+    canvas.darken_circle_half(cx, cy, radius);
+    let selected_angle = shutter_dial_angle(selected);
+    for step in 0..90 {
+        let start = DIAL_START_DEGREES + step as f64 * 3.0;
+        let end = start + 3.0;
+        let (x0, y0) = dial_point(cx, cy, radius - 7, start);
+        let (x1, y1) = dial_point(cx, cy, radius - 7, end);
+        canvas.line(
+            x0,
+            y0,
+            x1,
+            y1,
+            if end <= selected_angle { PAPER } else { QUIET },
+        );
+    }
+    for (index, choice) in SHUTTERS.iter().enumerate() {
+        let angle = shutter_dial_angle(index);
+        let major = index == 0 || index % 2 == 1;
+        let (x0, y0) = dial_point(cx, cy, radius - if major { 36 } else { 26 }, angle);
+        let (x1, y1) = dial_point(cx, cy, radius - 13, angle);
+        let color = if index == selected { PAPER } else { SOFT_PAPER };
+        canvas.line(x0, y0, x1, y1, color);
+        if major {
+            let (tx, ty) = dial_point(cx, cy, radius - 62, angle);
+            let label = choice.label;
+            canvas.text(
+                tx - label.len() as i32 * 6,
+                ty - 7,
+                label,
+                2,
+                if index == selected { PAPER } else { QUIET },
+            );
+        }
+    }
+    let (thumb_x, thumb_y) = dial_point(cx, cy, radius - 7, selected_angle);
+    canvas.circle(thumb_x, thumb_y, 8, PAPER);
+    canvas.circle(thumb_x, thumb_y, 3, INK);
+    canvas.text(cx - 42, cy - 51, "SHUTTER", 2, SOFT_PAPER);
+    let readout = if selected == 0 {
+        "AUTO".to_string()
+    } else {
+        format!("1/{}", SHUTTERS[selected].label)
+    };
+    canvas.text(cx - readout.len() as i32 * 12, cy - 16, &readout, 4, PAPER);
+    canvas.text(cx - 42, cy + 46, "SECONDS", 2, SOFT_PAPER);
+}
+
 pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     if state.gallery_open {
         render_gallery(canvas, state);
@@ -488,7 +586,9 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     );
     if state.picker_is_open(now) {
         let top = picker_list_top(canvas.width, canvas.height, camera, state.picker);
-        if state.picker.is_slider() {
+        if state.picker == Picker::Shutter {
+            draw_shutter_dial(canvas, camera.shutter);
+        } else if state.picker.is_slider() {
             let (left, right) = slider_bounds(canvas.width);
             let span = right - left;
             let (min, max) = slider_range(state.picker).expect("slider picker");
@@ -663,5 +763,16 @@ mod slider_tests {
                 assert_eq!(slider_value_at(picker, right + 20, width), max);
             }
         }
+    }
+
+    #[test]
+    fn shutter_dial_positions_map_to_each_speed() {
+        let (cx, cy, radius) = shutter_dial_geometry(720, 720);
+        for index in 0..SHUTTERS.len() {
+            let (x, y) = dial_point(cx, cy, radius - 20, shutter_dial_angle(index));
+            assert_eq!(shutter_dial_index_at(x, y, 720, 720), Some(index));
+        }
+        assert_eq!(shutter_dial_index_at(cx, cy, 720, 720), None);
+        assert_eq!(shutter_dial_index_at(cx, cy + radius - 20, 720, 720), None);
     }
 }

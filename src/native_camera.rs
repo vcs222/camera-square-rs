@@ -54,6 +54,7 @@ enum Command {
         reply: mpsc::Sender<io::Result<()>>,
     },
     SetAdjustments(CameraSettings),
+    SetShutter(usize),
     Stop,
 }
 
@@ -191,6 +192,12 @@ impl NativePreview {
     pub fn set_adjustments(&self, settings: CameraSettings) -> io::Result<()> {
         self.commands
             .send(Command::SetAdjustments(settings))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "native camera stopped"))
+    }
+
+    pub fn set_shutter(&self, index: usize) -> io::Result<()> {
+        self.commands
+            .send(Command::SetShutter(index))
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "native camera stopped"))
     }
 
@@ -508,6 +515,9 @@ fn camera_loop(
                     settings.contrast_tenths = updated.contrast_tenths;
                     settings.brightness_tenths = updated.brightness_tenths;
                     settings.saturation_tenths = updated.saturation_tenths;
+                }
+                Ok(Command::SetShutter(index)) => {
+                    settings.shutter = index;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
             }

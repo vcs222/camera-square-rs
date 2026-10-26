@@ -57,6 +57,7 @@ enum Hit {
     Shutter,
     PickerChoice(usize),
     AdjustmentSlider(Picker),
+    ShutterDial,
     Blank,
 }
 
@@ -71,6 +72,7 @@ struct Gesture {
     dragged: bool,
     shutter_offset: (i32, i32),
     adjustment_at_start: i16,
+    shutter_at_start: usize,
 }
 
 fn top_item_at(x: i32, y: i32, width: usize) -> Option<usize> {
@@ -128,6 +130,12 @@ fn hit_test(state: &UiState, x: i32, y: i32, width: usize, height: usize, now: I
         && (0..width as i32).contains(&x)
     {
         return Hit::AdjustmentSlider(state.picker);
+    }
+    if state.picker == Picker::Shutter
+        && state.picker_is_open(now)
+        && render::shutter_dial_index_at(x, y, width, height).is_some()
+    {
+        return Hit::ShutterDial;
     }
     if state.picker_is_open(now) && picker_is_top_row(state.picker) {
         if let Some(choice) = picker_choice_at(state, x, y, width, height) {
@@ -221,6 +229,14 @@ fn update_adjustment_slider(state: &mut UiState, picker: Picker, x: i32, width: 
     state
         .camera
         .set_slider_value(picker, render::slider_value_at(picker, x, width))
+}
+
+fn update_shutter_dial(state: &mut UiState, x: i32, y: i32, width: usize, height: usize) -> bool {
+    let Some(index) = render::shutter_dial_index_at(x, y, width, height) else {
+        return false;
+    };
+    state.refresh_picker_timeout();
+    replace(&mut state.camera.shutter, index)
 }
 
 fn trace_touch() -> bool {
@@ -601,6 +617,7 @@ fn apply_touch_frame(
                 dragged: false,
                 shutter_offset,
                 adjustment_at_start: state.camera.slider_value(state.picker).unwrap_or_default(),
+                shutter_at_start: state.camera.shutter,
             });
             if let Hit::Control(picker) = target {
                 state.open_picker(picker);
@@ -616,6 +633,20 @@ fn apply_touch_frame(
                 if frame.count == 1 && update_adjustment_slider(state, picker, x, display.width) {
                     if let Err(error) = preview.set_adjustments_live(&state.camera) {
                         eprintln!("camera-square-rs: live adjustment: {error}");
+                    }
+                }
+                let _ = render_current(
+                    display,
+                    state,
+                    preview,
+                    camera_frame,
+                    *frame_ready,
+                    background,
+                );
+            } else if matches!(target, Hit::ShutterDial) && frame.count == 1 {
+                if update_shutter_dial(state, x, y, display.width, display.height) {
+                    if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
+                        eprintln!("camera-square-rs: live shutter: {error}");
                     }
                 }
                 let _ = render_current(
@@ -671,6 +702,22 @@ fn apply_touch_frame(
                             background,
                         );
                     }
+                } else if matches!(current.target, Hit::ShutterDial)
+                    && current.max_contacts == 1
+                    && update_shutter_dial(state, x, y, display.width, display.height)
+                {
+                    current.dragged = true;
+                    if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
+                        eprintln!("camera-square-rs: live shutter: {error}");
+                    }
+                    let _ = render_current(
+                        display,
+                        state,
+                        preview,
+                        camera_frame,
+                        *frame_ready,
+                        background,
+                    );
                 }
             }
             *gesture = Some(current);
@@ -706,11 +753,42 @@ fn apply_touch_frame(
                     );
                 }
             }
+            if current.max_contacts > 1 && matches!(current.target, Hit::ShutterDial) {
+                state.camera.shutter = current.shutter_at_start;
+                if let Err(error) = preview.set_shutter_live(state.camera.shutter) {
+                    eprintln!("camera-square-rs: live shutter: {error}");
+                }
+                let _ = render_current(
+                    display,
+                    state,
+                    preview,
+                    camera_frame,
+                    *frame_ready,
+                    background,
+                );
+            }
             if current.max_contacts == 1
                 && (elapsed < Duration::from_secs(2)
-                    || matches!(current.target, Hit::AdjustmentSlider(_)))
+                    || matches!(current.target, Hit::AdjustmentSlider(_) | Hit::ShutterDial))
             {
                 match current.target {
+                    Hit::ShutterDial => {
+                        state.open_picker(Picker::Shutter);
+                        update_shutter_dial(state, x, y, display.width, display.height);
+                        if state.camera.shutter != current.shutter_at_start {
+                            match preview.set_shutter_live(state.camera.shutter) {
+                                Ok(true) => {}
+                                Ok(false) | Err(_) => restart_preview(
+                                    state,
+                                    preview,
+                                    display,
+                                    camera_frame,
+                                    preview_retry_at,
+                                    frame_ready,
+                                ),
+                            }
+                        }
+                    }
                     Hit::AdjustmentSlider(picker) => {
                         state.open_picker(picker);
                         update_adjustment_slider(state, picker, x, display.width);
@@ -1096,5 +1174,20 @@ mod top_row_tests {
             ));
             assert_eq!(picker_choice_at(&state, 360, y, 720, 720), None);
         }
+    }
+
+    #[test]
+    fn shutter_picker_uses_rotary_touch_target() {
+        let mut state = UiState::new(720, 720);
+        state.open_picker(Picker::Shutter);
+        let (cx, cy, radius) = render::shutter_dial_geometry(720, 720);
+        assert!(matches!(
+            hit_test(&state, cx, cy - radius + 20, 720, 720, Instant::now()),
+            Hit::ShutterDial
+        ));
+        assert_eq!(
+            picker_choice_at(&state, cx, cy - radius + 20, 720, 720),
+            None
+        );
     }
 }

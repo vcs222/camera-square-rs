@@ -102,7 +102,7 @@ pub struct Choice<T> {
     pub value: T,
 }
 
-pub const SHUTTERS: [Choice<i32>; 8] = [
+pub const SHUTTERS: [Choice<i32>; 14] = [
     Choice {
         label: "A",
         value: 0,
@@ -112,24 +112,48 @@ pub const SHUTTERS: [Choice<i32>; 8] = [
         value: 66_666,
     },
     Choice {
+        label: "20",
+        value: 50_000,
+    },
+    Choice {
         label: "30",
         value: 33_333,
+    },
+    Choice {
+        label: "40",
+        value: 25_000,
     },
     Choice {
         label: "60",
         value: 16_000,
     },
     Choice {
+        label: "80",
+        value: 12_500,
+    },
+    Choice {
         label: "125",
         value: 8_000,
+    },
+    Choice {
+        label: "160",
+        value: 6_250,
     },
     Choice {
         label: "250",
         value: 4_000,
     },
     Choice {
+        label: "320",
+        value: 3_125,
+    },
+    Choice {
         label: "500",
         value: 2_000,
+    },
+    Choice {
+        label: "640",
+        value: 1_562,
     },
     Choice {
         label: "1000",

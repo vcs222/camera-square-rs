@@ -120,6 +120,45 @@ impl Canvas<'_> {
         }
     }
 
+    /// Blend a circular panel with 50% black while retaining the preview below it.
+    pub fn darken_circle_half(&mut self, cx: i32, cy: i32, radius: i32) {
+        if radius < 0 {
+            return;
+        }
+        let (width, height) = self.bounds();
+        let (cx, cy, r) = (i64::from(cx), i64::from(cy), i64::from(radius));
+        let top = (cy - r).max(0);
+        let bottom = (cy + r).min(height - 1);
+        if top > bottom || cx + r < 0 || cx - r >= width {
+            return;
+        }
+        for y in top..=bottom {
+            let dy = y - cy;
+            let half_width = ((r * r - dy * dy) as f64).sqrt().floor() as i64;
+            let left = (cx - half_width).max(0);
+            let right = (cx + half_width).min(width - 1);
+            if left > right {
+                continue;
+            }
+            let (left, right) = (left as usize, right as usize);
+            let Some(start) = (y as usize)
+                .checked_mul(self.stride)
+                .and_then(|row| row.checked_add(left))
+            else {
+                break;
+            };
+            if start >= self.pixels.len() {
+                break;
+            }
+            let end = start
+                .saturating_add(right - left + 1)
+                .min(self.pixels.len());
+            for pixel in &mut self.pixels[start..end] {
+                *pixel = (*pixel & 0xf7de) >> 1;
+            }
+        }
+    }
+
     /// Clips before rasterizing so offscreen endpoints do not cause long loops.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u16) {
         let (width, height) = self.bounds();
@@ -265,5 +304,23 @@ mod tests {
         };
         canvas.darken_rect_half(0, 0, 1, 2);
         assert_eq!(pixels, [0x7bef, 0xf800, 0x03e0, 0x001f]);
+    }
+
+    #[test]
+    fn half_dark_dial_preserves_pixels_outside_the_circle() {
+        let mut pixels = [0xffff; 9];
+        let mut canvas = Canvas {
+            pixels: &mut pixels,
+            width: 3,
+            height: 3,
+            stride: 3,
+        };
+        canvas.darken_circle_half(1, 1, 1);
+        assert_eq!(
+            pixels,
+            [
+                0xffff, 0x7bef, 0xffff, 0x7bef, 0x7bef, 0x7bef, 0xffff, 0x7bef, 0xffff
+            ]
+        );
     }
 }
