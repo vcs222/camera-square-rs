@@ -5,7 +5,6 @@ use std::time::Instant;
 use crate::draw::{Canvas, rgb};
 use crate::settings::{
     ASPECT_RATIOS, CameraSettings, CaptureFormat, DENOISE, ISOS, METERING, Picker, SHUTTERS,
-    ev_picker_label,
 };
 use crate::state::{CompositionGrid, UiState};
 
@@ -13,8 +12,6 @@ const INK: u16 = 0x0000;
 const PAPER: u16 = 0xffff;
 const SOFT_PAPER: u16 = 0x9cf3;
 const QUIET: u16 = 0x7bef;
-const VALUE_LABELS: [&str; 5] = ["0.0", "0.5", "1.0", "1.5", "2.0"];
-const BRIGHTNESS_LABELS: [&str; 5] = ["-1.0", "-0.5", "0.0", "+0.5", "+1.0"];
 const WB_PICKER: [&str; 6] = ["AUTO", "DAY", "CLOUDY", "INDOOR", "FLUOR", "TUNG"];
 const WB_READOUT: [&str; 6] = ["AUTO", "DAY", "CLDY", "INDR", "FLOR", "TUNG"];
 const METERING_READOUT: [&str; 3] = ["CTR", "SPOT", "AVG"];
@@ -22,19 +19,37 @@ pub const TOP_WIDTHS: [i32; 8] = [42, 38, 52, 64, 76, 112, 108, 48];
 pub const TOP_GAP: i32 = 20;
 // Start below the centered controls' 64px hit area.
 const TOP_PICKER_LIST_TOP: i32 = 72;
-pub const SATURATION_SLIDER_TOUCH_TOP: i32 = 78;
-pub const SATURATION_SLIDER_TOUCH_BOTTOM: i32 = 174;
+pub const SLIDER_HEIGHT: i32 = 96;
+const TOP_SLIDER_TOP: i32 = 78;
 
-pub fn saturation_slider_bounds(width: usize) -> (i32, i32) {
+pub fn slider_bounds(width: usize) -> (i32, i32) {
     let width = width as i32;
     let margin = (width / 12).clamp(12, 60).min((width - 2).max(0) / 2);
     (margin, (width - margin - 1).max(margin + 1))
 }
 
-pub fn saturation_slider_value(x: i32, width: usize) -> u8 {
-    let (left, right) = saturation_slider_bounds(width);
+pub fn slider_range(picker: Picker) -> Option<(i16, i16)> {
+    match picker {
+        Picker::Sharpness | Picker::Contrast | Picker::Saturation => Some((0, 20)),
+        Picker::Brightness => Some((-10, 10)),
+        Picker::Ev => Some((-30, 30)),
+        _ => None,
+    }
+}
+
+pub fn slider_top(picker: Picker, height: usize) -> i32 {
+    if picker_is_top_row(picker) {
+        TOP_SLIDER_TOP
+    } else {
+        height as i32 - SLIDER_HEIGHT - 106
+    }
+}
+
+pub fn slider_value_at(picker: Picker, x: i32, width: usize) -> i16 {
+    let (min, max) = slider_range(picker).expect("slider picker");
+    let (left, right) = slider_bounds(width);
     let span = right - left;
-    (((x - left).clamp(0, span) * 20 + span / 2) / span) as u8
+    min + (((x - left).clamp(0, span) * i32::from(max - min) + span / 2) / span) as i16
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -139,12 +154,11 @@ pub fn picker_labels(_settings: &CameraSettings, picker: Picker) -> Vec<String> 
         Picker::Iso => ISOS.iter().map(|v| v.label.to_string()).collect(),
         Picker::WhiteBalance => WB_PICKER.iter().map(|s| s.to_string()).collect(),
         Picker::Metering => METERING.iter().map(|v| v.label.to_string()).collect(),
-        Picker::Sharpness | Picker::Contrast => {
-            VALUE_LABELS.iter().map(|s| s.to_string()).collect()
-        }
-        Picker::Saturation => Vec::new(),
-        Picker::Brightness => BRIGHTNESS_LABELS.iter().map(|s| s.to_string()).collect(),
-        Picker::Ev => (-30..=30).map(ev_picker_label).collect(),
+        Picker::Sharpness
+        | Picker::Contrast
+        | Picker::Brightness
+        | Picker::Saturation
+        | Picker::Ev => Vec::new(),
         Picker::Aspect => ASPECT_RATIOS.iter().map(|v| v.label.to_string()).collect(),
         Picker::CaptureFormat => CaptureFormat::ALL
             .iter()
@@ -161,11 +175,11 @@ pub fn picker_selected(settings: &CameraSettings, picker: Picker) -> usize {
         Picker::Iso => settings.iso,
         Picker::WhiteBalance => settings.white_balance,
         Picker::Metering => settings.metering,
-        Picker::Sharpness => settings.sharpness,
-        Picker::Contrast => settings.contrast,
-        Picker::Brightness => settings.brightness,
-        Picker::Saturation => usize::from(settings.saturation_tenths),
-        Picker::Ev => (settings.ev_thirds + 30) as usize,
+        Picker::Sharpness
+        | Picker::Contrast
+        | Picker::Brightness
+        | Picker::Saturation
+        | Picker::Ev => 0,
         Picker::Aspect => settings.aspect,
         Picker::CaptureFormat => CaptureFormat::ALL
             .iter()
@@ -197,10 +211,10 @@ pub fn picker_list_top(
     settings: &CameraSettings,
     picker: Picker,
 ) -> i32 {
-    if picker_is_top_row(picker) {
+    if picker.is_slider() {
+        slider_top(picker, height)
+    } else if picker_is_top_row(picker) {
         TOP_PICKER_LIST_TOP
-    } else if picker == Picker::Ev {
-        height as i32 - 152
     } else {
         height as i32 - 112 - 7 * picker_scale(width, settings, picker)
     }
@@ -209,10 +223,8 @@ pub fn picker_list_top(
 pub fn shutter_display_y(width: usize, height: usize, state: &UiState, now: Instant) -> i32 {
     if state.picker_is_open(now) {
         let list_top = picker_list_top(width, height, &state.camera, state.picker);
-        let list_height = if state.picker == Picker::Saturation {
-            SATURATION_SLIDER_TOUCH_BOTTOM - TOP_PICKER_LIST_TOP
-        } else if state.picker == Picker::Ev {
-            35
+        let list_height = if state.picker.is_slider() {
+            SLIDER_HEIGHT
         } else {
             7 * picker_scale(width, &state.camera, state.picker)
         };
@@ -451,10 +463,12 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     draw_grid(canvas, state);
     gallery_icon(canvas, top_item_x(canvas.width, 0));
     screenshot_icon(canvas, top_item_x(canvas.width, 1));
+    let contrast_label = camera.slider_label(Picker::Contrast);
+    let brightness_label = camera.slider_label(Picker::Brightness);
     let saturation_label = camera.saturation_label();
     for (item, label, value, offset) in [
-        (2, "C", VALUE_LABELS[camera.contrast], 16),
-        (3, "B", BRIGHTNESS_LABELS[camera.brightness], 16),
+        (2, "C", contrast_label.as_str(), 16),
+        (3, "B", brightness_label.as_str(), 16),
         (4, "SAT", saturation_label.as_str(), 40),
         (5, "DN", DENOISE[camera.denoise].label, 28),
         (6, "GRID", state.composition_grid.label(), 52),
@@ -474,53 +488,63 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     );
     if state.picker_is_open(now) {
         let top = picker_list_top(canvas.width, canvas.height, camera, state.picker);
-        if state.picker == Picker::Saturation {
-            let (left, right) = saturation_slider_bounds(canvas.width);
+        if state.picker.is_slider() {
+            let (left, right) = slider_bounds(canvas.width);
             let span = right - left;
-            let thumb = left + span * i32::from(camera.saturation_tenths) / 20;
+            let (min, max) = slider_range(state.picker).expect("slider picker");
+            let value = camera.slider_value(state.picker).expect("slider value");
+            let thumb = left + span * i32::from(value - min) / i32::from(max - min);
             let panel_left = (left - 36).max(0);
+            let panel_top = slider_top(state.picker, canvas.height);
             canvas.darken_rect_half(
                 panel_left,
-                SATURATION_SLIDER_TOUCH_TOP,
+                panel_top,
                 (width - panel_left * 2).max(1),
-                SATURATION_SLIDER_TOUCH_BOTTOM - SATURATION_SLIDER_TOUCH_TOP,
+                SLIDER_HEIGHT,
             );
-            canvas.fill_rect(left, 119, span, 4, QUIET);
-            canvas.fill_rect(left, 119, thumb - left, 4, PAPER);
-            canvas.circle(thumb, 121, 10, PAPER);
-            canvas.circle(thumb, 121, 5, INK);
-            canvas.text(left, 86, "SATURATION", 2, PAPER);
-            canvas.text(right - 36, 86, &saturation_label, 2, PAPER);
-            canvas.text(left, 147, "0.0", 2, SOFT_PAPER);
-            canvas.text((left + right) / 2 - 18, 147, "1.0", 2, SOFT_PAPER);
-            canvas.text(right - 36, 147, "2.0", 2, SOFT_PAPER);
-        } else if state.picker == Picker::Ev {
-            let cell_width = width / 5;
-            for slot in 0..5 {
-                let thirds = camera.ev_thirds as i32 + slot - 2;
-                if !(-30..=30).contains(&thirds) {
-                    continue;
-                }
-                let label = ev_picker_label(thirds as i8);
-                let scale = match slot {
-                    2 => 5,
-                    1 | 3 => 4,
-                    _ => 3,
-                }
-                .min(((cell_width - 2) / (label.len() as i32 * 6)).max(1));
-                let left = slot * cell_width;
-                let right = if slot == 4 { width } else { left + cell_width };
-                let x = left + (right - left - label.len() as i32 * 6 * scale) / 2;
-                overlay_text(
-                    canvas,
-                    fullscreen,
-                    x,
-                    top,
-                    &label,
-                    scale,
-                    if slot == 2 { PAPER } else { QUIET },
-                );
-            }
+            canvas.fill_rect(left, panel_top + 41, span, 4, QUIET);
+            canvas.fill_rect(left, panel_top + 41, thumb - left, 4, PAPER);
+            canvas.circle(thumb, panel_top + 43, 10, PAPER);
+            canvas.circle(thumb, panel_top + 43, 5, INK);
+            let title = match state.picker {
+                Picker::Sharpness => "SHARPNESS",
+                Picker::Ev => "EXPOSURE",
+                Picker::Contrast => "CONTRAST",
+                Picker::Brightness => "BRIGHTNESS",
+                Picker::Saturation => "SATURATION",
+                _ => unreachable!(),
+            };
+            let value_label = camera.slider_label(state.picker);
+            canvas.text(left, panel_top + 8, title, 2, PAPER);
+            canvas.text(
+                right - value_label.len() as i32 * 12,
+                panel_top + 8,
+                &value_label,
+                2,
+                PAPER,
+            );
+            let (low, mid, high) = if state.picker == Picker::Ev {
+                ("-10", "0", "+10")
+            } else if state.picker == Picker::Brightness {
+                ("-1.0", "0.0", "+1.0")
+            } else {
+                ("0.0", "1.0", "2.0")
+            };
+            canvas.text(left, panel_top + 69, low, 2, SOFT_PAPER);
+            canvas.text(
+                (left + right) / 2 - mid.len() as i32 * 6,
+                panel_top + 69,
+                mid,
+                2,
+                SOFT_PAPER,
+            );
+            canvas.text(
+                right - high.len() as i32 * 12,
+                panel_top + 69,
+                high,
+                2,
+                SOFT_PAPER,
+            );
         } else {
             let labels = picker_labels(camera, state.picker);
             let scale = picker_scale(canvas.width, camera, state.picker);
@@ -547,13 +571,14 @@ pub fn render_overlays(canvas: &mut Canvas<'_>, state: &UiState, now: Instant) {
     if !fullscreen {
         canvas.fill_rect(0, bottom, width, 100, INK);
     }
+    let sharpness_label = camera.slider_label(Picker::Sharpness);
     let ev_label = camera.ev_label();
     for (col, label, value, offset) in [
         (0, "SS", SHUTTERS[camera.shutter].label, 29),
         (1, "ISO", ISOS[camera.iso].label, 41),
         (2, "WB", WB_READOUT[camera.white_balance], 28),
         (3, "MTR", METERING_READOUT[camera.metering], 41),
-        (4, "SH", VALUE_LABELS[camera.sharpness], 28),
+        (4, "SH", sharpness_label.as_str(), 28),
         (5, "EV", ev_label.as_str(), 29),
     ] {
         overlay_text(
@@ -623,12 +648,20 @@ mod slider_tests {
     use super::*;
 
     #[test]
-    fn saturation_slider_reaches_full_range() {
+    fn sliders_reach_full_range() {
         for width in [480, 720] {
-            let (left, right) = saturation_slider_bounds(width);
-            assert_eq!(saturation_slider_value(left - 20, width), 0);
-            assert_eq!(saturation_slider_value((left + right) / 2, width), 10);
-            assert_eq!(saturation_slider_value(right + 20, width), 20);
+            let (left, right) = slider_bounds(width);
+            for picker in [Picker::Contrast, Picker::Sharpness, Picker::Saturation] {
+                assert_eq!(slider_value_at(picker, left - 20, width), 0);
+                assert_eq!(slider_value_at(picker, (left + right) / 2, width), 10);
+                assert_eq!(slider_value_at(picker, right + 20, width), 20);
+            }
+            for picker in [Picker::Brightness, Picker::Ev] {
+                let (min, max) = slider_range(picker).unwrap();
+                assert_eq!(slider_value_at(picker, left - 20, width), min);
+                assert_eq!(slider_value_at(picker, (left + right) / 2, width), 0);
+                assert_eq!(slider_value_at(picker, right + 20, width), max);
+            }
         }
     }
 }
