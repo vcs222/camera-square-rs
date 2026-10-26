@@ -17,6 +17,15 @@ pub enum Picker {
     Denoise,
 }
 
+impl Picker {
+    pub const fn is_slider(self) -> bool {
+        matches!(
+            self,
+            Self::Sharpness | Self::Ev | Self::Contrast | Self::Brightness | Self::Saturation
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureFormat {
     Jpeg,
@@ -226,13 +235,16 @@ pub struct CameraSettings {
     pub iso: usize,
     pub white_balance: usize,
     pub metering: usize,
-    pub sharpness: usize,
+    /// Sharpness in tenths, from 0.0 to 2.0.
+    pub sharpness_tenths: u8,
     /// EV is stored as thirds of a stop, from -30 through +30.
     pub ev_thirds: i8,
     pub aspect: usize,
     pub capture_format: CaptureFormat,
-    pub contrast: usize,
-    pub brightness: usize,
+    /// Contrast in tenths, from 0.0 to 2.0.
+    pub contrast_tenths: u8,
+    /// Brightness in tenths, from -1.0 to +1.0.
+    pub brightness_tenths: i8,
     /// Saturation in tenths, from 0.0 to 2.0.
     pub saturation_tenths: u8,
     pub denoise: usize,
@@ -245,12 +257,12 @@ impl Default for CameraSettings {
             iso: 0,
             white_balance: 0,
             metering: 0,
-            sharpness: 2,
+            sharpness_tenths: 10,
             ev_thirds: 0,
             aspect: 1,
             capture_format: CaptureFormat::Jpeg,
-            contrast: 2,
-            brightness: 2,
+            contrast_tenths: 10,
+            brightness_tenths: 0,
             saturation_tenths: 10,
             denoise: 0,
         }
@@ -258,6 +270,40 @@ impl Default for CameraSettings {
 }
 
 impl CameraSettings {
+    pub fn slider_value(&self, picker: Picker) -> Option<i16> {
+        Some(match picker {
+            Picker::Sharpness => i16::from(self.sharpness_tenths),
+            Picker::Ev => i16::from(self.ev_thirds),
+            Picker::Contrast => i16::from(self.contrast_tenths),
+            Picker::Brightness => i16::from(self.brightness_tenths),
+            Picker::Saturation => i16::from(self.saturation_tenths),
+            _ => return None,
+        })
+    }
+
+    pub fn set_slider_value(&mut self, picker: Picker, value: i16) -> bool {
+        match picker {
+            Picker::Sharpness => replace_value(&mut self.sharpness_tenths, value as u8),
+            Picker::Ev => replace_value(&mut self.ev_thirds, value as i8),
+            Picker::Contrast => replace_value(&mut self.contrast_tenths, value as u8),
+            Picker::Brightness => replace_value(&mut self.brightness_tenths, value as i8),
+            Picker::Saturation => replace_value(&mut self.saturation_tenths, value as u8),
+            _ => false,
+        }
+    }
+
+    pub fn slider_label(&self, picker: Picker) -> String {
+        match picker {
+            Picker::Sharpness => format!("{:.1}", f32::from(self.sharpness_tenths) / 10.0),
+            Picker::Ev => self.ev_label(),
+            Picker::Contrast => format!("{:.1}", f32::from(self.contrast_tenths) / 10.0),
+            Picker::Brightness if self.brightness_tenths == 0 => "0.0".to_string(),
+            Picker::Brightness => format!("{:+.1}", f32::from(self.brightness_tenths) / 10.0),
+            Picker::Saturation => self.saturation_label(),
+            _ => String::new(),
+        }
+    }
+
     pub fn saturation_value(&self) -> f32 {
         f32::from(self.saturation_tenths) / 10.0
     }
@@ -288,17 +334,8 @@ impl CameraSettings {
     }
 }
 
-pub fn ev_picker_label(thirds: i8) -> String {
-    if thirds == 0 {
-        return "0".into();
-    }
-    if thirds % 3 == 0 {
-        format!(
-            "{}{:.0}",
-            if thirds < 0 { '-' } else { '+' },
-            thirds.unsigned_abs() / 3
-        )
-    } else {
-        format!("{:+.1}", thirds as f32 / 3.0)
-    }
+fn replace_value<T: PartialEq>(slot: &mut T, value: T) -> bool {
+    let changed = *slot != value;
+    *slot = value;
+    changed
 }

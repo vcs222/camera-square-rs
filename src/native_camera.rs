@@ -53,7 +53,7 @@ enum Command {
         path: PathBuf,
         reply: mpsc::Sender<io::Result<()>>,
     },
-    SetSaturation(u8),
+    SetAdjustments(CameraSettings),
     Stop,
 }
 
@@ -188,9 +188,9 @@ impl NativePreview {
         Ok(receiver)
     }
 
-    pub fn set_saturation(&self, tenths: u8) -> io::Result<()> {
+    pub fn set_adjustments(&self, settings: CameraSettings) -> io::Result<()> {
         self.commands
-            .send(Command::SetSaturation(tenths))
+            .send(Command::SetAdjustments(settings))
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "native camera stopped"))
     }
 
@@ -254,13 +254,13 @@ fn apply_controls(request: &mut Request, settings: &CameraSettings) -> io::Resul
         .set(ExposureValue(settings.ev_value()))
         .map_err(camera_error)?;
     controls
-        .set(Sharpness(settings.sharpness as f32 / 2.0))
+        .set(Sharpness(f32::from(settings.sharpness_tenths) / 10.0))
         .map_err(camera_error)?;
     controls
-        .set(Contrast(settings.contrast as f32 / 2.0))
+        .set(Contrast(f32::from(settings.contrast_tenths) / 10.0))
         .map_err(camera_error)?;
     controls
-        .set(Brightness(settings.brightness as f32 / 2.0 - 1.0))
+        .set(Brightness(f32::from(settings.brightness_tenths) / 10.0))
         .map_err(camera_error)?;
     controls
         .set(Saturation(settings.saturation_value()))
@@ -502,8 +502,12 @@ fn camera_loop(
                         pending_capture = Some((path, reply));
                     }
                 }
-                Ok(Command::SetSaturation(tenths)) => {
-                    settings.saturation_tenths = tenths;
+                Ok(Command::SetAdjustments(updated)) => {
+                    settings.sharpness_tenths = updated.sharpness_tenths;
+                    settings.ev_thirds = updated.ev_thirds;
+                    settings.contrast_tenths = updated.contrast_tenths;
+                    settings.brightness_tenths = updated.brightness_tenths;
+                    settings.saturation_tenths = updated.saturation_tenths;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
             }

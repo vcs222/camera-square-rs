@@ -11,8 +11,8 @@ Camera Square is designed for the Raspberry Pi camera stack. With the `native-ca
 | White balance | Modes | Auto, daylight, cloudy, indoor, fluorescent, and tungsten. Custom modes and fixed gains are not exposed. |
 | Metering | Centre, spot, average | Each mode is passed to preview and still capture. Guides are visual aids only. |
 | EV compensation | Full app range | −10.0 to +10.0 in one-third-stop steps. It adjusts automatic exposure/gain targets; it cannot change exposure when shutter and gain are both fixed. |
-| Sharpness | Limited choices | 0.0 to 2.0 in 0.5 steps. |
-| Contrast, brightness, saturation | Limited ranges | Contrast and brightness use picker steps; saturation uses a 0.0–2.0 slider in 0.1 steps. `rpicam` accepts a wider numeric range for contrast and saturation. |
+| Sharpness | Limited range | 0.0 to 2.0 slider in 0.1 steps. |
+| Contrast, brightness, saturation | Limited ranges | Contrast and saturation use 0.0–2.0 sliders; brightness uses −1.0–+1.0. All move in 0.1 steps. `rpicam` accepts a wider numeric range for contrast and saturation. |
 | Denoise | Selected modes | Auto, off, colour-denoise off, fast, and high quality. Throughput and still/video behavior can vary by hardware. |
 | HDR | Not exposed | The tested Pi Zero 2 W with HQ Camera does not produce HDR with `auto` or `single-exp`. |
 | Focus peaking | App feature | Preview-only edge overlay; it is not a camera control. |

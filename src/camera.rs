@@ -37,9 +37,9 @@ fn validate(settings: &CameraSettings) -> io::Result<()> {
         || settings.white_balance >= WHITE_BALANCES.len()
         || settings.metering >= METERING.len()
         || settings.denoise >= DENOISE.len()
-        || settings.sharpness >= 5
-        || settings.contrast >= 5
-        || settings.brightness >= 5
+        || settings.sharpness_tenths > 20
+        || settings.contrast_tenths > 20
+        || !(-10..=10).contains(&settings.brightness_tenths)
         || settings.saturation_tenths > 20
         || !(-30..=30).contains(&settings.ev_thirds)
     {
@@ -57,15 +57,15 @@ fn apply_settings(command: &mut Command, settings: &CameraSettings) {
         .args(["--metering", METERING[settings.metering].value])
         .args([
             "--sharpness",
-            &format!("{:.1}", settings.sharpness as f32 / 2.0),
+            &settings.slider_label(crate::settings::Picker::Sharpness),
         ])
         .args([
             "--contrast",
-            &format!("{:.1}", settings.contrast as f32 / 2.0),
+            &settings.slider_label(crate::settings::Picker::Contrast),
         ])
         .args([
             "--brightness",
-            &format!("{:.1}", settings.brightness as f32 / 2.0 - 1.0),
+            &settings.slider_label(crate::settings::Picker::Brightness),
         ])
         .args(["--saturation", &settings.saturation_label()])
         .args(["--denoise", DENOISE[settings.denoise].value])
@@ -249,13 +249,13 @@ impl Preview {
 
     /// Update an active native session without interrupting its preview.
     /// Returns false when the compatibility preview needs a restart instead.
-    pub fn set_saturation_live(&self, tenths: u8) -> io::Result<bool> {
+    pub fn set_adjustments_live(&self, settings: &CameraSettings) -> io::Result<bool> {
         #[cfg(all(target_os = "linux", feature = "native-camera"))]
         if let Some(native) = &self.native {
-            native.set_saturation(tenths)?;
+            native.set_adjustments(settings.clone())?;
             return Ok(true);
         }
-        let _ = tenths;
+        let _ = settings;
         Ok(false)
     }
 
